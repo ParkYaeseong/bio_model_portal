@@ -1,0 +1,17 @@
+[Unit]
+Description=Protein Portal Local RunPod-compatible Gateway
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pipeline/protein_pipeline/portal/gateway
+Environment=HOME=/home/pipeline
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=GATEWAY_ENDPOINTS=/home/pipeline/protein_pipeline/portal/gateway/endpoints.yaml
+EnvironmentFile=-/home/pipeline/protein_pipeline/portal/gateway/.env
+ExecStart=/home/pipeline/protein_pipeline/portal/.venv/bin/uvicorn gateway:app --host 127.0.0.1 --port 8500
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

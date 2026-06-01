@@ -1,0 +1,17 @@
+[Unit]
+Description=Protein Portal FastAPI Backend
+After=default.target protein-portal-gateway.service
+Wants=protein-portal-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pipeline/protein_pipeline/portal/runpod-portal/portal/backend
+Environment=HOME=/home/pipeline
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/home/pipeline/protein_pipeline/portal/runpod-portal/portal/backend/.env
+ExecStart=/home/pipeline/protein_pipeline/portal/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8400
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

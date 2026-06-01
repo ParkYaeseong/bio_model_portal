@@ -1,0 +1,41 @@
+# Secrets / runtime
+.env
+*.env
+!*.env.example
+.env.local
+
+# Databases / user data
+*.db
+*.sqlite
+*.sqlite3
+data/
+backend/data/
+portal/backend/data/
+
+# Results / uploads
+results/
+uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log

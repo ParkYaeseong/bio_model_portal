@@ -1,0 +1,23 @@
+﻿version: "3.9"
+services:
+  api:
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/data:/data
+    environment:
+      - STORAGE_ROOT=/data
+    ports:
+      - "8400:8000"
+  web:
+    build:
+      context: ./frontend
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "3400:3000"
+

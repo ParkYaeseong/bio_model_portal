@@ -1,0 +1,158 @@
+const browserApiBase =
+  typeof window !== "undefined" ? process.env.NEXT_PUBLIC_BROWSER_API_BASE_URL ?? "" : null;
+
+const serverApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8400";
+
+const API_BASE = browserApiBase ?? serverApiBase;
+
+type FetchOptions = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: BodyInit;
+};
+
+async function apiFetch<T>(path: string, token?: string, options: FetchOptions = {}): Promise<T> {
+  const headers: Record<string, string> = options.headers ? { ...options.headers } : {};
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "요청이 실패했습니다.");
+  }
+  if (response.status === 204) {
+    return {} as T;
+  }
+  const text = await response.text();
+  return text ? (JSON.parse(text) as T) : ({} as T);
+}
+
+export async function register(username: string, password: string) {
+  return apiFetch("/api/auth/register", undefined, {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function login(username: string, password: string) {
+  const body = new URLSearchParams();
+  body.set("username", username);
+  body.set("password", password);
+  body.set("grant_type", "password");
+  const response = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    body,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+  if (!response.ok) {
+    throw new Error("로그인에 실패했습니다.");
+  }
+  return response.json();
+}
+
+export const fetchPipelines = (token: string) => apiFetch<PipelineResponse>("/api/pipelines", token);
+export const fetchJobs = (token: string) => apiFetch<JobResponse[]>("/api/jobs", token);
+export const fetchJob = (jobId: string, token: string) => apiFetch<JobResponse>(`/api/jobs/${jobId}`, token);
+
+export async function createJob(form: FormData, token: string) {
+  return apiFetch<JobResponse>("/api/jobs", token, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export const deleteJob = (jobId: string, token: string) =>
+  apiFetch(`/api/jobs/${jobId}`, token, { method: "DELETE" });
+
+export async function downloadArtifact(jobId: string, artifactId: string, token: string) {
+  const response = await fetch(`${API_BASE}/api/jobs/${jobId}/artifacts/${artifactId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error("파일 다운로드에 실패했습니다.");
+  }
+  const blob = await response.blob();
+  return blob;
+}
+
+export async function downloadArchive(jobId: string, token: string) {
+  const response = await fetch(`${API_BASE}/api/jobs/${jobId}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error("결과를 다운로드할 수 없습니다.");
+  }
+  const blob = await response.blob();
+  return blob;
+}
+
+export interface PipelineResponse {
+  retentionDays: number;
+  pipelines: PipelineMeta[];
+}
+
+export interface PipelineMeta {
+  key: string;
+  label: string;
+  description: string;
+  instructions: string;
+  supportsSequence: boolean;
+  requiresArchive: boolean;
+  previewKind: string;
+  inputFields: Array<{
+    name: string;
+    label: string;
+    field_type: string;
+    required?: boolean;
+    options?: Array<{ value: string; label: string }>;
+    placeholder?: string;
+    helper?: string;
+  }>;
+}
+
+export interface ArtifactMeta {
+  id: string;
+  file_name: string;
+  kind: string;
+  mime_type: string | null;
+  size_bytes: number;
+}
+
+export interface JobResponse {
+  id: string;
+  title: string;
+  pipeline: string;
+  status: string;
+  runpod_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  notes?: string | null;
+  preferred_download_dir?: string | null;
+  parameters: Record<string, unknown>;
+  artifacts: ArtifactMeta[];
+}
+
+export type AssistantRequest = {
+  job_id: string;
+  message: string;
+  artifact_id?: string | null;
+};
+
+export type AssistantResponse = {
+  reply: string;
+};
+
+export const askAssistant = (payload: AssistantRequest, token: string) =>
+  apiFetch<AssistantResponse>("/api/assistant", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });

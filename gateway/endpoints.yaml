@@ -1,0 +1,45 @@
+# Maps RunPod-style endpoint_id -> local worker URL.
+# Portal uses these IDs in its .env (ALPHAFOLD_ENDPOINT_ID etc.).
+# The `packager` field controls how the worker output gets bundled into
+# an archive that portal's JobMonitor can persist.
+
+endpoints:
+  bioemu-local:
+    worker_url: http://127.0.0.1:18103
+    packager: bioemu
+
+  esmfold-local:
+    worker_url: http://127.0.0.1:18162
+    packager: esmfold
+
+  esmfold2-local:
+    worker_url: http://127.0.0.1:18108
+    packager: esmfold2
+
+  rfdiffusion-local:
+    worker_url: http://127.0.0.1:18104
+    packager: generic
+    adapter: rfdiffusion
+
+  proteinmpnn-local:
+    worker_url: http://127.0.0.1:18101
+    packager: proteinmpnn
+    adapter: proteinmpnn
+
+  mmseqs-local:
+    worker_url: http://127.0.0.1:18106
+    packager: generic
+    adapter: mmseqs
+
+  rosetta-relax-local:
+    worker_url: http://127.0.0.1:18102
+    packager: generic
+    adapter: rosetta_relax
+
+  diffdock-local:
+    worker_url: http://127.0.0.1:18105
+    packager: generic
+
+  colabfold-local:
+    worker_url: http://127.0.0.1:18161
+    packager: colabfold

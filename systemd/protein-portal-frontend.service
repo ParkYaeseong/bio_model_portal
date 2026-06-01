@@ -1,0 +1,18 @@
+[Unit]
+Description=Protein Portal Next.js Frontend
+After=default.target protein-portal-backend.service
+Wants=protein-portal-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pipeline/protein_pipeline/portal/runpod-portal/portal/frontend
+Environment=HOME=/home/pipeline
+Environment=PATH=/home/pipeline/.nvm/versions/node/v22.22.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NEXT_PUBLIC_API_BASE_URL=/api
+Environment=NODE_ENV=production
+ExecStart=/home/pipeline/.nvm/versions/node/v22.22.2/bin/npm run start -- -p 3400
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Protein Pipeline ESMFold2 (Biohub API) HTTP Worker
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pipeline/protein_pipeline
+Environment=HOME=/home/pipeline
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=ESMFOLD2_MODEL=esmfold2-fast-2026-05
+Environment=BIOHUB_API_URL=https://biohub.ai
+EnvironmentFile=/home/pipeline/models/venvs/esmfold2/.env
+ExecStart=/home/pipeline/models/venvs/esmfold2/bin/python deploy/gpu/esmfold2_http_worker.py --host 0.0.0.0 --port 18108
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
