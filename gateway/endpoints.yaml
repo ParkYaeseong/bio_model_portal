@@ -27,3 +27,8 @@ endpoints:
   esmfold-local:
     worker_url: http://211.188.35.221:18162
     packager: esmfold
+
+  # RunPod serverless passthrough (no local GPU worker for these models)
+  alphafold-local:
+    runpod_endpoint_id: n3tcpxdv3irr46
+    packager: generic

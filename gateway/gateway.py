@@ -25,6 +25,14 @@ CONFIG_PATH = Path(os.getenv("GATEWAY_ENDPOINTS", Path(__file__).parent / "endpo
 GATEWAY_TOKEN = os.getenv("GATEWAY_TOKEN", "").strip() or None
 JOB_TTL_SECONDS = int(os.getenv("GATEWAY_JOB_TTL_SECONDS", "86400"))
 
+# RunPod passthrough: endpoints declared with `runpod_endpoint_id` (instead of a
+# local `worker_url`) are forwarded to RunPod serverless. RunPod's /status output
+# is the same handler payload a local worker returns, so packaging is unchanged.
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip() or None
+RUNPOD_API_BASE = os.getenv("RUNPOD_API_BASE", "https://api.runpod.ai/v2").rstrip("/")
+RUNPOD_POLL_TIMEOUT_S = int(os.getenv("RUNPOD_POLL_TIMEOUT_S", "3600"))
+RUNPOD_POLL_INTERVAL_S = float(os.getenv("RUNPOD_POLL_INTERVAL_S", "5"))
+
 ENDPOINTS: dict[str, dict[str, str]] = {}
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -36,10 +44,17 @@ def _load_endpoints() -> None:
     if not isinstance(entries, dict) or not entries:
         raise RuntimeError(f"no endpoints in {CONFIG_PATH}")
     for key, value in entries.items():
-        if not isinstance(value, dict) or not value.get("worker_url"):
-            raise RuntimeError(f"endpoint {key!r} missing worker_url")
+        if not isinstance(value, dict):
+            raise RuntimeError(f"endpoint {key!r} invalid")
+        worker_url = value.get("worker_url")
+        runpod_id = value.get("runpod_endpoint_id")
+        if not worker_url and not runpod_id:
+            raise RuntimeError(
+                f"endpoint {key!r} needs worker_url or runpod_endpoint_id"
+            )
         ENDPOINTS[str(key)] = {
-            "worker_url": str(value["worker_url"]).rstrip("/"),
+            "worker_url": str(worker_url).rstrip("/") if worker_url else "",
+            "runpod_endpoint_id": str(runpod_id) if runpod_id else "",
             "packager": str(value.get("packager") or "generic"),
             "adapter": str(value.get("adapter") or ""),
         }
@@ -70,6 +85,48 @@ def _gc_jobs() -> None:
         LOG.info("gc removed %d expired job(s)", len(dead))
 
 
+def _call_runpod(runpod_id: str, adapted: dict, job_id: str) -> dict:
+    """Submit to RunPod serverless and poll to completion.
+
+    Returns a worker-style dict ({"status": ..., "output": ...}) so the rest of
+    _run_job (failure detection + packaging) is identical to the local path.
+    """
+    if not RUNPOD_API_KEY:
+        raise RuntimeError("RUNPOD_API_KEY is not configured for RunPod passthrough")
+    headers = {"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+    with httpx.Client(timeout=60) as client:
+        r = client.post(
+            f"{RUNPOD_API_BASE}/{runpod_id}/run",
+            headers=headers,
+            json={"input": adapted},
+        )
+        r.raise_for_status()
+        sub = r.json() if r.content else {}
+        rp_job = sub.get("id")
+        rp_status = str(sub.get("status") or "").upper()
+        deadline = time.time() + RUNPOD_POLL_TIMEOUT_S
+        while rp_job and rp_status in {"IN_QUEUE", "IN_PROGRESS", ""}:
+            if time.time() > deadline:
+                raise RuntimeError(
+                    f"runpod job {rp_job} timed out after {RUNPOD_POLL_TIMEOUT_S}s"
+                )
+            time.sleep(RUNPOD_POLL_INTERVAL_S)
+            sr = client.get(
+                f"{RUNPOD_API_BASE}/{runpod_id}/status/{rp_job}", headers=headers
+            )
+            sr.raise_for_status()
+            sub = sr.json()
+            rp_status = str(sub.get("status") or "").upper()
+
+    if rp_status == "COMPLETED":
+        return {"status": "COMPLETED", "output": sub.get("output")}
+    return {
+        "status": "FAILED",
+        "error": sub.get("error") or f"runpod status {rp_status or 'unknown'}",
+        "output": sub.get("output"),
+    }
+
+
 def _run_job(job_id: str) -> None:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -84,6 +141,7 @@ def _run_job(job_id: str) -> None:
         job["status"] = "IN_PROGRESS"
         job["started_at"] = time.time()
         worker_url = endpoint["worker_url"]
+        runpod_id = endpoint.get("runpod_endpoint_id") or ""
         packager_name = endpoint["packager"]
         adapter_name = endpoint["adapter"]
         payload = job["input"]
@@ -98,22 +156,26 @@ def _run_job(job_id: str) -> None:
             JOBS[job_id]["completed_at"] = time.time()
         return
 
-    LOG.info("job %s -> %s (adapter=%s)", job_id, worker_url, adapter_name or "none")
+    backend_label = f"runpod:{runpod_id}" if runpod_id else worker_url
+    LOG.info("job %s -> %s (adapter=%s)", job_id, backend_label, adapter_name or "none")
     try:
-        with httpx.Client(timeout=None) as client:
-            response = client.post(
-                f"{worker_url}/run",
-                json={"input": adapted, "id": job_id},
-            )
-        if response.status_code >= 400:
-            with JOBS_LOCK:
-                JOBS[job_id]["status"] = "FAILED"
-                JOBS[job_id]["error"] = (
-                    f"worker http {response.status_code}: {response.text[:1000]}"
+        if runpod_id:
+            data = _call_runpod(runpod_id, adapted, job_id)
+        else:
+            with httpx.Client(timeout=None) as client:
+                response = client.post(
+                    f"{worker_url}/run",
+                    json={"input": adapted, "id": job_id},
                 )
-                JOBS[job_id]["completed_at"] = time.time()
-            return
-        data = response.json()
+            if response.status_code >= 400:
+                with JOBS_LOCK:
+                    JOBS[job_id]["status"] = "FAILED"
+                    JOBS[job_id]["error"] = (
+                        f"worker http {response.status_code}: {response.text[:1000]}"
+                    )
+                    JOBS[job_id]["completed_at"] = time.time()
+                return
+            data = response.json()
     except Exception as exc:  # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id]["status"] = "FAILED"
@@ -182,6 +244,27 @@ def endpoint_health(endpoint_id: str, authorization: str | None = Header(default
     endpoint = ENDPOINTS.get(endpoint_id)
     if not endpoint:
         raise HTTPException(404, f"unknown endpoint {endpoint_id}")
+    runpod_id = endpoint.get("runpod_endpoint_id") or ""
+    if runpod_id:
+        try:
+            headers = (
+                {"Authorization": f"Bearer {RUNPOD_API_KEY}"} if RUNPOD_API_KEY else {}
+            )
+            with httpx.Client(timeout=10) as client:
+                r = client.get(
+                    f"{RUNPOD_API_BASE}/{runpod_id}/health", headers=headers
+                )
+            return {
+                "endpoint_id": endpoint_id,
+                "backend": "runpod",
+                "worker_status": r.status_code,
+                "body": r.json() if r.content else {},
+            }
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                {"endpoint_id": endpoint_id, "backend": "runpod", "worker_status": "unreachable", "error": str(exc)},
+                status_code=502,
+            )
     try:
         with httpx.Client(timeout=5) as client:
             r = client.get(f"{endpoint['worker_url']}/healthz")
@@ -258,11 +341,14 @@ def cancel(
         if job["status"] in {"COMPLETED", "FAILED"}:
             return {"id": job_id, "status": job["status"]}
         worker_url = ENDPOINTS[endpoint_id]["worker_url"]
-    try:
-        with httpx.Client(timeout=10) as client:
-            client.post(f"{worker_url}/cancel", json={"id": job_id})
-    except Exception as exc:  # noqa: BLE001
-        LOG.warning("worker cancel call failed for %s: %s", job_id, exc)
+    # RunPod jobs are polled in a background thread; we don't track the remote
+    # RunPod job id here, so cancel is best-effort local-only for those.
+    if worker_url:
+        try:
+            with httpx.Client(timeout=10) as client:
+                client.post(f"{worker_url}/cancel", json={"id": job_id})
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("worker cancel call failed for %s: %s", job_id, exc)
     with JOBS_LOCK:
         if JOBS[job_id]["status"] not in {"COMPLETED", "FAILED"}:
             JOBS[job_id]["status"] = "FAILED"
