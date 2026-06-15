@@ -17,11 +17,19 @@ remote host `211.188.35.221` (protein_pipeline GPU HTTP fleet, shared with RAPID
 
 Source: `/opt/bio_model_portal` (branch `kbf-deploy`); SSO gateway: `/opt/bio_model_portal_sso`.
 
-## GPU integration (pure config)
-`gateway/endpoints.yaml` worker_url → `211.188.35.221`:
-proteinmpnn 18101, rosetta-relax 18102, bioemu 18103, rfdiffusion 18104,
-diffdock 18105, mmseqs 18107(GPU), colabfold 18160(LB), esmfold 18162.
-No RunPod, no gateway code change. Smoke results: `docs/SMOKE_RESULTS.md` (8/8 OK).
+## Model routing (gateway/endpoints.yaml)
+
+**Local GPU HTTP** (worker_url → `211.188.35.221`): proteinmpnn 18101,
+rosetta-relax 18102, bioemu 18103, rfdiffusion 18104, diffdock 18105,
+mmseqs 18107(GPU), colabfold 18160(LB), esmfold 18162. Smoke: `docs/SMOKE_RESULTS.md` (8/8 OK).
+
+**RunPod serverless passthrough** (runpod_endpoint_id): alphafold-local →
+`n3tcpxdv3irr46`, phastest-local → `hmhrwi5mvm8idm`. Gateway submits to
+RunPod /run and polls /status to completion, normalizing output to the same
+shape as a local worker (packaging unchanged). `RUNPOD_API_KEY` (reused from
+protein_pipeline) + `RUNPOD_API_BASE` in `gateway/.env`. Both endpoints
+health-verified (worker_status 200, ready workers). NOTE: AF2 input-schema
+compatibility with `n3tcpxdv3irr46` should be confirmed with one real run.
 
 ## SSO
 - Keycloak realm `kbf`, **public** client `bio-model-portal`
