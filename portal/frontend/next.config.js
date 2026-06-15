@@ -6,7 +6,8 @@ const API_PROXY_TARGET = rawProxyTarget.replace(/\/$/, "");
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: "standalone",
+  // `output: standalone` is for minimal Docker images and breaks `next start`
+  // rewrites; this deployment runs `next start` under systemd, so omit it.
   async rewrites() {
     return [
       {

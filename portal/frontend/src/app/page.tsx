@@ -96,19 +96,20 @@ export default function HomePage() {
     }
   }, []);
 
-  // Auto-login with the shared SSO-gated account when no token is present and
-  // the embedded credentials are configured. Failures fall through to the
+  // Auto-login with the shared SSO-gated account when no token is present.
+  // Credentials live server-side only; we call the /bootstrap-login route
+  // handler which performs the login and returns just the access token, so no
+  // secret is ever shipped to the browser bundle. Failures fall through to the
   // normal login form.
   useEffect(() => {
     if (token) return;
     if (window.localStorage.getItem("portal-token")) return;
-    const autoUser = process.env.NEXT_PUBLIC_AUTO_LOGIN_USERNAME;
-    const autoPassword = process.env.NEXT_PUBLIC_AUTO_LOGIN_PASSWORD;
-    if (!autoUser || !autoPassword) return;
     let cancelled = false;
     (async () => {
       try {
-        const data = await login(autoUser, autoPassword);
+        const res = await fetch("/bootstrap-login", { method: "POST" });
+        if (!res.ok) return;
+        const data = await res.json();
         if (cancelled || !data?.access_token) return;
         window.localStorage.setItem("portal-token", data.access_token);
         setToken(data.access_token);
