@@ -40,3 +40,4 @@ yarn-error.log*
 # Logs
 *.log
 gateway/.env
+portal/frontend/.env.production

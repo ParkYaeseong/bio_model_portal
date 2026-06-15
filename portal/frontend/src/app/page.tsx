@@ -96,6 +96,31 @@ export default function HomePage() {
     }
   }, []);
 
+  // Auto-login with the shared SSO-gated account when no token is present and
+  // the embedded credentials are configured. Failures fall through to the
+  // normal login form.
+  useEffect(() => {
+    if (token) return;
+    if (window.localStorage.getItem("portal-token")) return;
+    const autoUser = process.env.NEXT_PUBLIC_AUTO_LOGIN_USERNAME;
+    const autoPassword = process.env.NEXT_PUBLIC_AUTO_LOGIN_PASSWORD;
+    if (!autoUser || !autoPassword) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await login(autoUser, autoPassword);
+        if (cancelled || !data?.access_token) return;
+        window.localStorage.setItem("portal-token", data.access_token);
+        setToken(data.access_token);
+      } catch {
+        // Ignore: fall through to the manual login form.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const handleLogin = async (username: string, password: string) => {
     setAuthError(null);
     setAuthLoading(true);
