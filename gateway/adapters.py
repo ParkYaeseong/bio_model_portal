@@ -66,36 +66,8 @@ def adapter_proteinmpnn(payload: dict) -> dict:
 
 
 def adapter_rfdiffusion(payload: dict) -> dict:
-    out = dict(payload)
-    if not (isinstance(out.get("input_files"), dict) and out["input_files"]):
-        pdb = _pick_pdb(_extract_archive(out))
-        if pdb:
-            _, data = pdb
-            out["input_files"] = {"input.pdb": data.decode("utf-8", errors="replace")}
-    has_input_pdb = isinstance(out.get("input_files"), dict) and "input.pdb" in out["input_files"]
-    if not isinstance(out.get("inputs"), dict):
-        spec: dict[str, Any] = {}
-        contigs = out.pop("contigs", None) or out.pop("contig", None)
-        length = out.pop("length", None)
-        if has_input_pdb:
-            spec["input"] = "input.pdb"
-            if contigs:
-                spec["contig"] = contigs
-            if length:
-                spec["length"] = str(length)
-        else:
-            # Unconditional generation: RFD3 expects `length`, not `contig`.
-            if length:
-                spec["length"] = str(length)
-            elif contigs:
-                spec["length"] = str(contigs)
-        hotspots = out.pop("hotspots", None) or out.pop("hotspot_res", None)
-        if hotspots:
-            spec["hotspots"] = hotspots
-        if spec:
-            out["inputs"] = {"spec-1": spec}
-    out.pop("input_archive", None)
-    return out
+    from prep import rfd3
+    return rfd3.build_input(payload)
 
 
 def adapter_mmseqs(payload: dict) -> dict:

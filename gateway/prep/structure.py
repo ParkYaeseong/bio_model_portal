@@ -1,0 +1,27 @@
+from __future__ import annotations
+import base64, io, tarfile
+from bio import pdb
+
+def extract_pdb_text(payload: dict) -> str | None:
+    """Return PDB/mmCIF text from inline keys or payload.input_archive (tar.gz base64)."""
+    for key in ("pdb_content", "input_pdb_content"):
+        if isinstance(payload.get(key), str) and payload[key].strip():
+            return payload[key]
+    archive = payload.get("input_archive")
+    if isinstance(archive, dict) and archive.get("base64"):
+        raw = base64.b64decode(archive["base64"])
+        with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+            members = sorted((m for m in tar.getmembers() if m.isfile()), key=lambda m: m.name)
+            for m in members:
+                if m.name.lower().endswith((".pdb", ".cif", ".mmcif")):
+                    f = tar.extractfile(m)
+                    if f:
+                        return f.read().decode("utf-8", errors="replace")
+    return None
+
+def preprocess(pdb_text: str, chains: list[str] | None = None):
+    """Normalize (mmcif->pdb, first model) then strip non-positive resseq + renumber from 1.
+    Returns (clean_pdb_text, mapping)."""
+    normalized = pdb.normalize_structure_text(pdb_text)
+    return pdb.preprocess_pdb(normalized, chains=chains,
+                             strip_nonpositive_resseq=True, renumber_resseq_from_1=True)
