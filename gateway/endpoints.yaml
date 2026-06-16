@@ -36,6 +36,7 @@ endpoints:
   alphafold-local:
     runpod_endpoint_id: n3tcpxdv3irr46
     packager: generic
+    adapter: alphafold
   phastest-local:
     runpod_endpoint_id: hmhrwi5mvm8idm
     packager: generic
