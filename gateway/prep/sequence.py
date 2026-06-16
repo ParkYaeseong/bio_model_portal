@@ -49,6 +49,23 @@ def sequence_from_structure(payload: dict) -> str:
     return max(by_chain.values(), key=len).strip()
 
 
+def build_folding_input(payload: dict, *, model: str) -> dict:
+    """Sequence-input models (ESMFold/ColabFold): pass the sequence through, or
+    recover it from an uploaded PDB/CIF (longest chain) when none was typed."""
+    out = dict(payload)
+    has_seq = bool(str(out.get("sequence", "") or "").strip()) or bool(out.get("sequences"))
+    if not has_seq:
+        seq = sequence_from_structure(out)
+        if seq:
+            out["sequence"] = seq
+        else:
+            raise ValueError(
+                f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
+            )
+    out.pop("input_archive", None)
+    return out
+
+
 def build_bioemu_input(payload: dict) -> dict:
     """Validate the protein sequence then build the BioEmu worker payload.
 

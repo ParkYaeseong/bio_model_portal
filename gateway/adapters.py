@@ -65,6 +65,16 @@ def adapter_bioemu(payload: dict) -> dict:
     return sequence.build_bioemu_input(payload)
 
 
+def adapter_colabfold(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="ColabFold")
+
+
+def adapter_esmfold(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="ESMFold")
+
+
 def adapter_passthrough(payload: dict) -> dict:
     out = dict(payload)
     out.pop("input_archive", None)
@@ -78,6 +88,8 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "diffdock": adapter_diffdock,
     "mmseqs": adapter_mmseqs,
     "bioemu": adapter_bioemu,
+    "colabfold": adapter_colabfold,
+    "esmfold": adapter_esmfold,
     "passthrough": adapter_passthrough,
 }
 

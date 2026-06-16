@@ -26,9 +26,11 @@ endpoints:
   colabfold-local:
     worker_url: http://211.188.35.221:18160
     packager: colabfold
+    adapter: colabfold
   esmfold-local:
     worker_url: http://211.188.35.221:18162
     packager: esmfold
+    adapter: esmfold
 
   # RunPod serverless passthrough (no local GPU worker for these models)
   alphafold-local:
