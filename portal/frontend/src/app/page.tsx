@@ -85,6 +85,22 @@ const createUploadEntry = (file: File, desiredPath?: string, enforceInputsPrefix
   return { file, relativePath };
 };
 
+// Accepted upload formats + an unobtrusive hint, per pipeline. `accept` only
+// filters the file dialog (users can still pick "all files"); the hint tells
+// them what the pipeline can use.
+function acceptedFiles(pipeline: PipelineMeta): { accept: string; hint: string } {
+  if (pipeline.key === "phastest") {
+    return { accept: ".fasta,.fa,.fna,.csv,.gb,.gbk,.zip", hint: "FASTA · CSV · GenBank" };
+  }
+  if (pipeline.supportsSequence) {
+    return {
+      accept: ".fasta,.fa,.faa,.fna,.txt,.pdb,.cif,.mmcif,.zip",
+      hint: "FASTA, 또는 PDB·CIF (구조 업로드 시 서열 자동 추출)",
+    };
+  }
+  return { accept: ".pdb,.cif,.mmcif,.zip", hint: "PDB · CIF" };
+}
+
 export default function HomePage() {
   const [token, setToken] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -949,6 +965,7 @@ function SubmissionPanel(props: SubmissionPanelProps) {
             <input
               type="file"
               multiple
+              accept={acceptedFiles(pipeline).accept}
               className="hidden"
               onChange={(e) => {
                 onFiles(e.target.files);
@@ -970,6 +987,7 @@ function SubmissionPanel(props: SubmissionPanelProps) {
             />
           </label>
         </div>
+        <p className="mt-2 text-[11px] text-slate-400">허용 형식: {acceptedFiles(pipeline).hint}</p>
         {uploads.length > 0 ? (
           <ul className="mt-4 space-y-2 text-sm text-slate-600">
             {uploads.map((entry, index) => (
