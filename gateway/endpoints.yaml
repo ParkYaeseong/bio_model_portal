@@ -10,6 +10,7 @@ endpoints:
   bioemu-local:
     worker_url: http://211.188.35.221:18103
     packager: bioemu
+    adapter: bioemu
   rfdiffusion-local:
     worker_url: http://211.188.35.221:18104
     packager: generic
