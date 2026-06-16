@@ -238,6 +238,25 @@ def health() -> dict:
     return {"ok": True, "endpoints": sorted(ENDPOINTS.keys())}
 
 
+@app.post("/prep/contig-suggestions")
+def contig_suggestions(body: dict = Body(...), authorization: str | None = Header(default=None)):
+    _check_auth(authorization)
+    import base64
+    from prep import contig_suggest, structure
+    pdb_text = None
+    if isinstance(body.get("pdb_base64"), str) and body["pdb_base64"]:
+        pdb_text = base64.b64decode(body["pdb_base64"]).decode("utf-8", errors="replace")
+    else:
+        pdb_text = structure.extract_pdb_text(body)
+    fallback = {"chains": [], "options": [{"id": "custom", "label": "직접 입력", "contig": "", "recommended": True}], "processed_coords": True}
+    if not pdb_text:
+        return fallback
+    try:
+        return contig_suggest.suggest(pdb_text)
+    except Exception as exc:  # noqa: BLE001
+        return {**fallback, "error": str(exc)}
+
+
 @app.get("/v2/{endpoint_id}/health")
 def endpoint_health(endpoint_id: str, authorization: str | None = Header(default=None)):
     _check_auth(authorization)
