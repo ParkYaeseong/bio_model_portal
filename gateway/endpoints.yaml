@@ -17,6 +17,7 @@ endpoints:
   diffdock-local:
     worker_url: http://211.188.35.221:18105
     packager: generic
+    adapter: diffdock
   mmseqs-local:
     worker_url: http://211.188.35.221:18107
     packager: generic

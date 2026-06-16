@@ -60,6 +60,11 @@ def adapter_rfdiffusion(payload: dict) -> dict:
     return rfd3.build_input(payload)
 
 
+def adapter_diffdock(payload: dict) -> dict:
+    from prep import diffdock
+    return diffdock.build_input(payload)
+
+
 def adapter_mmseqs(payload: dict) -> dict:
     out = dict(payload)
     if out.get("query_fasta"):
@@ -92,6 +97,7 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "rosetta_relax": adapter_rosetta_relax,
     "proteinmpnn": adapter_proteinmpnn,
     "rfdiffusion": adapter_rfdiffusion,
+    "diffdock": adapter_diffdock,
     "mmseqs": adapter_mmseqs,
     "passthrough": adapter_passthrough,
 }
