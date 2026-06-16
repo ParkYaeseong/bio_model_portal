@@ -1345,7 +1345,7 @@ function ResultPanel({ job, token, onArtifactDownload }: ResultPanelProps) {
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-lg font-semibold text-slate-900">결과 패널</h3>
       <p className="text-sm text-slate-500">선택한 작업: {job.title}</p>
-      {["alphafold", "diffdock"].includes(job.pipeline) && structureArtifacts.length > 0 && (
+      {structureArtifacts.length > 0 && (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-600">3D Structure Viewer</p>
