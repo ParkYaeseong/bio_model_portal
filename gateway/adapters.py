@@ -51,18 +51,8 @@ def adapter_rosetta_relax(payload: dict) -> dict:
 
 
 def adapter_proteinmpnn(payload: dict) -> dict:
-    if payload.get("pdb_base64") or payload.get("pdb_text") or payload.get("pdb_content"):
-        return payload
-    files = _extract_archive(payload)
-    pdb = _pick_pdb(files)
-    if not pdb:
-        return payload
-    name, data = pdb
-    out = dict(payload)
-    out["pdb_base64"] = base64.b64encode(data).decode("ascii")
-    out.setdefault("pdb_name", name.rsplit("/", 1)[-1].removesuffix(".pdb"))
-    out.pop("input_archive", None)
-    return out
+    from prep import proteinmpnn
+    return proteinmpnn.build_input(payload)
 
 
 def adapter_rfdiffusion(payload: dict) -> dict:
