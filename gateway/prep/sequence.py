@@ -30,9 +30,34 @@ def validate_protein_sequence(sequence: str, *, model: str) -> None:
         )
 
 
+def sequence_from_structure(payload: dict) -> str:
+    """Best-effort: derive a single-chain sequence from an uploaded PDB/CIF.
+
+    BioEmu samples conformational ensembles from a SEQUENCE, not a structure. If
+    the user uploaded a PDB instead of typing a sequence, recover the sequence
+    (longest chain — the main protein) so the job can run.
+    """
+    from bio import pdb as _pdb  # vendored, pure stdlib
+    from . import structure
+
+    pdb_text = structure.extract_pdb_text(payload)
+    if not pdb_text:
+        return ""
+    by_chain = _pdb.sequence_by_chain(_pdb.normalize_structure_text(pdb_text))
+    if not by_chain:
+        return ""
+    return max(by_chain.values(), key=len).strip()
+
+
 def build_bioemu_input(payload: dict) -> dict:
-    """Validate the protein sequence then build the BioEmu worker payload."""
+    """Validate the protein sequence then build the BioEmu worker payload.
+
+    Accepts either a typed `sequence` or an uploaded structure (PDB/CIF) — in the
+    latter case the sequence is extracted from the structure's longest chain.
+    """
     seq = str(payload.get("sequence", "") or "").strip()
+    if not seq:
+        seq = sequence_from_structure(payload)
     validate_protein_sequence(seq, model="BioEmu")
     out = dict(payload)
     out["sequence"] = seq
