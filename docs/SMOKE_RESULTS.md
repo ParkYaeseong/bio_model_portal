@@ -55,3 +55,30 @@ Confirmed against `protein_pipeline` RunPod clients
 - rfdiffusion (rfd3): `inputs`/`input_files` (adapter derives from `length`/`contigs`/PDB).
 - rosetta-relax: `pdb_content`+`target_id`+`nstruct` (adapter derives from `input_archive`).
 - diffdock: `cmd`+`protein_ligand_csv`+`pdb_files`+`sdf_files`+dir fields (passthrough).
+
+## 2026-06-16 vendored-prep verification
+
+Final E2E verification after vendoring `protein_pipeline` input-prep into the
+gateway and rewriting per-model adapters to use it. Gateway unit suite:
+**27 passed**. Services `bmp-gateway`/`bmp-backend`/`bmp-frontend` all active;
+`/health` lists all 10 endpoints; every endpoint reports `worker_status:200`.
+
+| model | endpoint | result |
+|---|---|---|
+| proteinmpnn | proteinmpnn-local | **COMPLETED** |
+| rosetta-relax | rosetta-relax-local | **COMPLETED** |
+| bioemu | bioemu-local | **COMPLETED** |
+| mmseqs | mmseqs-local | **COMPLETED** |
+| diffdock | diffdock-local | **IN_PROGRESS** (no error) |
+| rfdiffusion (4KL5) | rfdiffusion-local | **COMPLETED** |
+| esmfold | esmfold-local | health 200 |
+| colabfold | colabfold-local | health 200 |
+| alphafold | alphafold-local | health 200 |
+| phastest | phastest-local | health 200 |
+
+**4KL5 RFD3 regression FIXED.** The negative-residue contig case now runs the
+full portal stack end-to-end (frontend proxy -> backend -> gateway -> worker):
+bootstrap-login token -> backend `/api/rfdiffusion/contig-suggestions` returns a
+recommended `ligand_motif` contig -> `rfd3.build_input` with
+`contig_processed_coords:true` -> gateway `/run` -> job **COMPLETED**. No
+"Invalid contig format" crash (no CONTIG-CRASH).
