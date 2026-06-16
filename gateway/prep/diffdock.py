@@ -1,9 +1,30 @@
 from __future__ import annotations
 
 import base64
+import csv
+import io
+import re
 
 from bio import ligand_text
 from . import structure
+
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SAFE_PATH = re.compile(r"^[A-Za-z0-9._/-]{1,256}$")
+
+
+def _safe_name(value: str, field: str) -> str:
+    v = str(value or "").strip()
+    if not _SAFE_NAME.match(v):
+        raise ValueError(f"invalid {field}: must match [A-Za-z0-9_-]{{1,64}}")
+    return v
+
+
+def _safe_path(value: str, field: str, default: str) -> str:
+    v = str(value or default).strip()
+    if ".." in v or not _SAFE_PATH.match(v):
+        raise ValueError(f"invalid {field}")
+    return v
 
 
 def _encode_text_file(name: str, content: str) -> dict[str, str]:
@@ -17,6 +38,11 @@ def build_input(payload: dict) -> dict:
 
     If the payload is already a fully-formed worker payload (has
     ``protein_ligand_csv``), pass it through unchanged (minus internal keys).
+    The passthrough branch trusts the portal-backend-constructed payload
+    (_build_diffdock_payload in jobs.py) which already validates inputs and
+    builds the CSV with csv.writer.  complex_name in a passthrough payload is
+    NOT re-validated here — it is already embedded in the pre-built CSV/cmd.
+
     Otherwise build the worker shape from protein PDB + ligand SMILES/SDF,
     exactly as protein_pipeline's LocalHTTPDiffDockClient.dock() does.
     """
@@ -27,7 +53,8 @@ def build_input(payload: dict) -> dict:
         out.pop("input_archive", None)
         return out
 
-    complex_name = str(out.get("complex_name") or "complex")
+    # Validate complex_name — it is used in filenames, CSV fields, and cmd.
+    complex_name = _safe_name(out.get("complex_name") or "complex", "complex_name")
 
     pdb_text = structure.extract_pdb_text(out)
     if not pdb_text:
@@ -41,22 +68,37 @@ def build_input(payload: dict) -> dict:
     if not (smiles or sdf):
         raise ValueError("DiffDock requires ligand_smiles or ligand_sdf")
 
-    config = str(out.get("config") or "default_inference_args.yaml")
-    out_dir = str(out.get("out_dir") or "results/")
-    extra_args = str(out.get("extra_args") or "")
+    # config and out_dir: validate paths; defaults match the portal constants.
+    # Neither is exposed by the portal UI (_build_diffdock_payload always uses
+    # the hardcoded DIFFDOCK_CONFIG / DIFFDOCK_OUT_DIR), but validate defensively.
+    config = _safe_path(out.get("config"), "config", "default_inference_args.yaml")
+    out_dir = _safe_path(out.get("out_dir"), "out_dir", "results/")
+
+    # extra_args is NOT exposed by the portal (_build_diffdock_payload hard-codes
+    # extra_args=""). Drop any caller-supplied value to prevent shell injection.
+    # If this ever needs to be re-enabled, require it to be a list of pre-validated
+    # tokens and shlex.quote each one before joining.
+
     protein_name = f"{complex_name}.pdb"
     ligand_name = f"{complex_name}.sdf"
     csv_name = "input_protein_ligand_info.csv"
     ligand_desc = str(smiles) if smiles else f"inputs/{ligand_name}"
-    csv_text = "\n".join(
-        [
-            "complex_name,protein_path,ligand_description,protein_sequence",
-            f"{complex_name},inputs/{protein_name},{ligand_desc},",
-        ]
-    ) + "\n"
-    cmd = f"python3 -m inference --config {config} --protein_ligand_csv data/{csv_name} --out_dir {out_dir}"
-    if extra_args:
-        cmd = f"{cmd} {extra_args}".strip()
+
+    # Build CSV with csv.writer so any special characters in field values
+    # (commas, quotes, newlines in SMILES or ligand_description) are properly
+    # escaped rather than injected raw into the CSV.
+    csv_buf = io.StringIO()
+    writer = csv.writer(csv_buf)
+    writer.writerow(["complex_name", "protein_path", "ligand_description", "protein_sequence"])
+    writer.writerow([complex_name, f"inputs/{protein_name}", ligand_desc, ""])
+    csv_text = csv_buf.getvalue()
+
+    cmd = (
+        f"python3 -m inference --config {config}"
+        f" --protein_ligand_csv data/{csv_name}"
+        f" --out_dir {out_dir}"
+    )
+    # extra_args deliberately omitted — not portal-exposed, dropped to prevent injection.
 
     return {
         "cmd": cmd,
@@ -67,5 +109,5 @@ def build_input(payload: dict) -> dict:
         "inputs_dir": "inputs",
         "out_dir": out_dir,
         "config": config,
-        "extra_args": extra_args,
+        "extra_args": "",
     }

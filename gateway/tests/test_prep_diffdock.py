@@ -5,6 +5,72 @@ import pytest
 from prep import diffdock
 
 
+# ---------------------------------------------------------------------------
+# Security: input validation tests (RED → GREEN via fixes in diffdock.py)
+# ---------------------------------------------------------------------------
+
+def test_diffdock_rejects_shell_metachars_in_complex_name():
+    with pytest.raises(ValueError):
+        diffdock.build_input({"complex_name": "x; rm -rf /", "ligand_smiles": "CCO", "protein_pdb": "ATOM ...\n"})
+
+
+def test_diffdock_rejects_path_traversal_out_dir():
+    with pytest.raises(ValueError):
+        diffdock.build_input({"complex_name": "ok", "out_dir": "../../etc", "ligand_smiles": "CCO", "protein_pdb": "ATOM ...\n"})
+
+
+def test_diffdock_rejects_dotdot_in_config():
+    with pytest.raises(ValueError):
+        diffdock.build_input({"complex_name": "ok", "config": "../../../etc/passwd", "ligand_smiles": "CCO", "protein_pdb": "ATOM ...\n"})
+
+
+def test_diffdock_rejects_special_chars_in_complex_name():
+    with pytest.raises(ValueError):
+        diffdock.build_input({"complex_name": "foo$(cat /etc/passwd)", "ligand_smiles": "CCO", "protein_pdb": "ATOM ...\n"})
+
+
+def test_diffdock_rejects_spaces_in_complex_name():
+    with pytest.raises(ValueError):
+        diffdock.build_input({"complex_name": "my complex", "ligand_smiles": "CCO", "protein_pdb": "ATOM ...\n"})
+
+
+def test_diffdock_csv_quotes_fields():
+    out = diffdock.build_input({
+        "complex_name": "ok",
+        "ligand_smiles": "CCO",
+        "protein_pdb": "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n",
+    })
+    csv_obj = out["protein_ligand_csv"]
+    blob = base64.b64decode(csv_obj["data_b64"]).decode() if isinstance(csv_obj, dict) else csv_obj
+    assert "ok" in blob
+
+
+def test_diffdock_extra_args_ignored_even_if_supplied():
+    """extra_args is not portal-exposed; any supplied value must be silently dropped."""
+    out = diffdock.build_input({
+        "complex_name": "ok",
+        "extra_args": "--evil-flag $(rm -rf /)",
+        "ligand_smiles": "CCO",
+        "protein_pdb": "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n",
+    })
+    # Must not appear in cmd
+    assert "--evil-flag" not in out.get("cmd", "")
+    assert "$(rm" not in out.get("cmd", "")
+    # extra_args in output should be empty
+    assert out.get("extra_args", "") == ""
+
+
+def test_diffdock_accepts_valid_complex_name_with_hyphen_underscore():
+    """Valid names (alphanumeric, hyphens, underscores) must pass."""
+    out = diffdock.build_input({
+        "complex_name": "my-complex_01",
+        "ligand_smiles": "CCO",
+        "protein_pdb": "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n",
+    })
+    assert "protein_ligand_csv" in out
+    assert out["cmd"]
+
+
 def test_diffdock_smiles_builds_csv():
     out = diffdock.build_input({"complex_name": "t", "ligand_smiles": "CCO",
                                 "protein_pdb": "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n"})
