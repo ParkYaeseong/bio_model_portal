@@ -17,11 +17,11 @@ endpoints:
     adapter: rfdiffusion
   diffdock-local:
     worker_url: http://211.188.35.221:18105
-    packager: generic
+    packager: diffdock
     adapter: diffdock
   mmseqs-local:
     worker_url: http://211.188.35.221:18107
-    packager: generic
+    packager: mmseqs
     adapter: mmseqs
   colabfold-local:
     worker_url: http://211.188.35.221:18160

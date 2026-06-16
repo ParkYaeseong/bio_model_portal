@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import io
 import json
 import tarfile
+import zipfile
 from typing import Any, Callable
 
 
@@ -188,6 +190,63 @@ def package_rfd3(output: dict) -> str:
     return _build(build)
 
 
+def package_mmseqs(output: dict) -> str:
+    """MMseqs2 search: materialize the hit table (`tsv`) and the MSA.
+
+    The worker returns the search results as `tsv` (a string, the m8/tsv hit
+    table) and the MSA as `a3m_gz_b64` (gzip-compressed, base64-encoded a3m).
+    The generic packager doesn't know these keys, so without this packager the
+    result archive only contains output.json (the actual .tsv/.a3m results were
+    buried inside the json and never written as standalone files).
+    """
+    def build(tar: tarfile.TarFile) -> None:
+        _add_raw_json(tar, output)
+        tsv = output.get("tsv")
+        if isinstance(tsv, str) and tsv.strip():
+            _add_text(tar, "search.tsv", tsv)
+        a3m_gz = output.get("a3m_gz_b64")
+        if isinstance(a3m_gz, str) and a3m_gz.strip():
+            try:
+                a3m = gzip.decompress(base64.b64decode(a3m_gz)).decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001 — keep json/streams even if MSA is malformed
+                a3m = None
+            if a3m and a3m.strip():
+                _add_text(tar, "msa.a3m", a3m)
+        _add_streams(tar, output)
+
+    return _build(build)
+
+
+def package_diffdock(output: dict) -> str:
+    """DiffDock: extract the docked poses from the results zip.
+
+    The worker returns the entire DiffDock out_dir as `out_dir_zip_b64`
+    (base64-encoded zip) containing the ranked pose files (rank1.sdf, etc.).
+    The generic packager doesn't know this key, so without this packager the
+    result archive only contains output.json + logs (no .sdf/.pdb poses).
+    """
+    def build(tar: tarfile.TarFile) -> None:
+        _add_raw_json(tar, output)
+        zip_b64 = output.get("out_dir_zip_b64")
+        if isinstance(zip_b64, str) and zip_b64.strip():
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(base64.b64decode(zip_b64)))
+            except Exception:  # noqa: BLE001 — keep json/streams even if zip is malformed
+                zf = None
+            if zf is not None:
+                with zf:
+                    for member in zf.infolist():
+                        if member.is_dir():
+                            continue
+                        data = zf.read(member)
+                        # Flatten nested dirs but keep a stable, readable name.
+                        name = member.filename.replace("/", "_").lstrip("_") or "pose"
+                        _add(tar, name, data)
+        _add_streams(tar, output)
+
+    return _build(build)
+
+
 PACKAGERS: dict[str, Callable[[dict], str]] = {
     "bioemu": package_bioemu,
     "esmfold": package_esmfold,
@@ -195,6 +254,8 @@ PACKAGERS: dict[str, Callable[[dict], str]] = {
     "colabfold": package_colabfold,
     "proteinmpnn": package_proteinmpnn,
     "rfd3": package_rfd3,
+    "mmseqs": package_mmseqs,
+    "diffdock": package_diffdock,
     "generic": package_generic,
 }
 
