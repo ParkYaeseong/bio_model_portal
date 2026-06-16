@@ -13,7 +13,7 @@ endpoints:
     adapter: bioemu
   rfdiffusion-local:
     worker_url: http://211.188.35.221:18104
-    packager: generic
+    packager: rfd3
     adapter: rfdiffusion
   diffdock-local:
     worker_url: http://211.188.35.221:18105

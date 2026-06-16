@@ -144,12 +144,45 @@ def package_generic(output: dict) -> str:
     return _build(build)
 
 
+def package_rfd3(output: dict) -> str:
+    """RFD3/RFdiffusion: extract designed backbone PDBs from `designs`/`selected`.
+
+    The worker returns `designs` (list of {"id","pdb"}) and `selected` (the chosen
+    design dict). The generic packager doesn't know these keys, so without this
+    packager the result archive only contains output.json (no .pdb files).
+    """
+    def build(tar: tarfile.TarFile) -> None:
+        _add_raw_json(tar, output)
+        seen: set[str] = set()
+        designs = output.get("designs")
+        if isinstance(designs, list):
+            for idx, entry in enumerate(designs):
+                if not isinstance(entry, dict):
+                    continue
+                pdb_text = entry.get("pdb")
+                if not (isinstance(pdb_text, str) and pdb_text.strip()):
+                    continue
+                design_id = str(entry.get("id") or f"design_{idx:03d}")
+                name = f"{design_id}.pdb"
+                if name in seen:
+                    name = f"design_{idx:03d}.pdb"
+                seen.add(name)
+                _add_text(tar, name, pdb_text)
+        selected = output.get("selected")
+        if isinstance(selected, dict) and isinstance(selected.get("pdb"), str) and selected["pdb"].strip():
+            _add_text(tar, "selected.pdb", selected["pdb"])
+        _add_streams(tar, output)
+
+    return _build(build)
+
+
 PACKAGERS: dict[str, Callable[[dict], str]] = {
     "bioemu": package_bioemu,
     "esmfold": package_esmfold,
     "esmfold2": package_esmfold2,
     "colabfold": package_colabfold,
     "proteinmpnn": package_proteinmpnn,
+    "rfd3": package_rfd3,
     "generic": package_generic,
 }
 
