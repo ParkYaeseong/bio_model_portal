@@ -31,3 +31,9 @@ def test_rfd3_processed_coords_contig_passthrough():
 def test_rfd3_unconditional_length_only():
     out = rfd3.build_input({"length": 10})
     assert out["inputs"]["spec-1"] == {"length": "10"}
+
+def test_rfd3_custom_range_remaps_both_endpoints():
+    out = rfd3.build_input({"input_archive": _archive(), "contigs": "A201-202"})
+    contig = out["inputs"]["spec-1"]["contig"]
+    # both endpoints must be remapped (no bare original 201/202 left); processed are 140/141
+    assert contig == "A140-141", contig
