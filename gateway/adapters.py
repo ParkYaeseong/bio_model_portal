@@ -36,18 +36,8 @@ def _pick_pdb(files: dict[str, bytes]) -> tuple[str, bytes] | None:
 
 
 def adapter_rosetta_relax(payload: dict) -> dict:
-    if payload.get("pdb_content") or payload.get("input_pdb_content"):
-        return payload
-    files = _extract_archive(payload)
-    pdb = _pick_pdb(files)
-    if not pdb:
-        return payload
-    name, data = pdb
-    out = dict(payload)
-    out["pdb_content"] = data.decode("utf-8", errors="replace")
-    out.setdefault("target_id", name.rsplit("/", 1)[-1].removesuffix(".pdb"))
-    out.pop("input_archive", None)
-    return out
+    from prep import rosetta
+    return rosetta.build_input(payload)
 
 
 def adapter_proteinmpnn(payload: dict) -> dict:
