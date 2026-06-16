@@ -8,8 +8,10 @@ import ReactMarkdown from "react-markdown";
 import {
   PipelineMeta,
   JobResponse,
+  ContigOption,
   fetchPipelines,
   fetchJobs,
+  fetchContigSuggestions,
   createJob,
   deleteJob,
   downloadArchive,
@@ -325,6 +327,10 @@ function Dashboard({ token, onLogout }: DashboardProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [diffdockJobs, setDiffdockJobs] = useState<DiffdockJobInput[]>([createBlankDiffdockJob()]);
   const [phastestConfig, setPhastestConfig] = useState<PhastestConfig>(defaultPhastestConfig);
+  const [contigOptions, setContigOptions] = useState<ContigOption[]>([]);
+  const [contigChoice, setContigChoice] = useState<string>("custom");
+  const [customContig, setCustomContig] = useState<string>("");
+  const [contigLoading, setContigLoading] = useState(false);
 
   const retentionDays = pipelineData?.retentionDays ?? 7;
   const pipelines = useMemo(() => pipelineData?.pipelines ?? [], [pipelineData]);
@@ -351,6 +357,13 @@ function Dashboard({ token, onLogout }: DashboardProps) {
     }
   }, [selectedPipeline]);
 
+  // Reset contig suggestions whenever the selected pipeline changes.
+  useEffect(() => {
+    setContigOptions([]);
+    setContigChoice("custom");
+    setCustomContig("");
+  }, [selectedPipeline?.key]);
+
   const handlePasswordPersist = (pipelineKey: string, name: string, value: string) => {
     if (typeof window === "undefined") return;
     const storageKey = `portal:${pipelineKey}:${name}`;
@@ -370,8 +383,27 @@ function Dashboard({ token, onLogout }: DashboardProps) {
 
   const handleFiles = (files: FileList | null) => {
     if (!files) return;
-    const entries = Array.from(files).map((file) => createUploadEntry(file));
+    const fileArray = Array.from(files);
+    const entries = fileArray.map((file) => createUploadEntry(file));
     setUploads((prev) => [...prev, ...entries]);
+    if (selectedPipeline?.key === "rfdiffusion") {
+      const pdb = fileArray.find((f) => /\.(pdb|cif)$/i.test(f.name));
+      if (pdb) {
+        void loadContigSuggestions(pdb);
+      }
+    }
+  };
+
+  const loadContigSuggestions = async (file: File) => {
+    setContigLoading(true);
+    try {
+      const result = await fetchContigSuggestions(file, token);
+      setContigOptions(result.options);
+      const recommended = result.options.find((o) => o.recommended);
+      setContigChoice(recommended?.id ?? "custom");
+    } finally {
+      setContigLoading(false);
+    }
   };
 
   const handleFolder = async (files: FileList | null) => {
@@ -504,6 +536,13 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       }
     }
 
+    if (selectedPipeline.key === "rfdiffusion") {
+      const chosen = contigOptions.find((o) => o.id === contigChoice);
+      const contigValue = contigChoice === "custom" ? customContig.trim() : (chosen?.contig ?? "");
+      normalizedParams.contigs = contigValue;
+      normalizedParams.contig_processed_coords = contigChoice !== "custom";
+    }
+
     const needsArchive =
       selectedPipeline.requiresArchive &&
       !(selectedPipeline.key === "phastest" && phastestConfig.input_type === "genbank");
@@ -531,6 +570,9 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       setSequence("");
       setDiffdockJobs([createBlankDiffdockJob()]);
       setPhastestConfig(defaultPhastestConfig);
+      setContigOptions([]);
+      setContigChoice("custom");
+      setCustomContig("");
       await refreshJobs();
     } catch (error: any) {
       setUploadError(error.message || "작업 생성 중 오류가 발생했습니다.");
@@ -601,6 +643,12 @@ function Dashboard({ token, onLogout }: DashboardProps) {
                 onDiffdockRemove={handleDiffdockJobRemove}
                 phastestConfig={phastestConfig}
                 onPhastestConfigChange={setPhastestConfig}
+                contigOptions={contigOptions}
+                contigChoice={contigChoice}
+                onContigChoiceChange={setContigChoice}
+                customContig={customContig}
+                onCustomContigChange={setCustomContig}
+                contigLoading={contigLoading}
                 uploads={uploads}
                 onFiles={handleFiles}
                 onFolder={handleFolder}
@@ -690,6 +738,12 @@ type SubmissionPanelProps = {
   onDiffdockRemove: (index: number) => void;
   phastestConfig: PhastestConfig;
   onPhastestConfigChange: (config: PhastestConfig) => void;
+  contigOptions: ContigOption[];
+  contigChoice: string;
+  onContigChoiceChange: (id: string) => void;
+  customContig: string;
+  onCustomContigChange: (value: string) => void;
+  contigLoading: boolean;
   uploads: UploadEntry[];
   onFiles: (files: FileList | null) => void;
   onFolder: (files: FileList | null) => void;
@@ -712,6 +766,12 @@ function SubmissionPanel(props: SubmissionPanelProps) {
     onDiffdockRemove,
     phastestConfig,
     onPhastestConfigChange,
+    contigOptions,
+    contigChoice,
+    onContigChoiceChange,
+    customContig,
+    onCustomContigChange,
+    contigLoading,
     paramState,
     onParamChange,
     onPasswordPersist,
@@ -747,7 +807,9 @@ function SubmissionPanel(props: SubmissionPanelProps) {
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {pipeline.inputFields.map((field) => (
+        {pipeline.inputFields
+          .filter((field) => !(pipeline.key === "rfdiffusion" && field.name === "contigs"))
+          .map((field) => (
           <div key={field.name}>
             <label className="text-sm font-semibold text-slate-600">{translate(field.label)}</label>
             {field.field_type === "select" ? (
@@ -806,6 +868,45 @@ function SubmissionPanel(props: SubmissionPanelProps) {
           </div>
         ))}
       </div>
+
+      {pipeline.key === "rfdiffusion" && (
+        <div className="mt-4">
+          <label className="text-sm font-semibold text-slate-600">Contig 선택 (모티프 스캐폴딩)</label>
+          {contigOptions.length > 0 ? (
+            <select
+              className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
+              value={contigChoice}
+              onChange={(e) => onContigChoiceChange(e.target.value)}
+            >
+              {contigOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                  {o.recommended ? " (추천)" : ""}
+                  {o.contig ? ` — ${o.contig}` : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="mt-1 rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-400">
+              {contigLoading
+                ? "PDB를 분석하여 Contig 후보를 불러오는 중..."
+                : "PDB/CIF 파일을 업로드하면 Contig 후보가 자동으로 채워집니다. 신규 디자인이면 비워두세요."}
+            </p>
+          )}
+          {(contigChoice === "custom" || contigOptions.length === 0) && (
+            <input
+              type="text"
+              className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3"
+              placeholder="A1-10,B5-12"
+              value={customContig}
+              onChange={(e) => onCustomContigChange(e.target.value)}
+            />
+          )}
+          <p className="mt-1 text-xs text-slate-500">
+            업로드한 PDB의 잔기 선택. 신규 디자인이면 비워두세요.
+          </p>
+        </div>
+      )}
 
       {pipeline.key === "diffdock" && (
         <div className="mt-6">

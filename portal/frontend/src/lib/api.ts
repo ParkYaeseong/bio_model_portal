@@ -94,6 +94,37 @@ export async function downloadArchive(jobId: string, token: string) {
   return blob;
 }
 
+export interface ContigOption {
+  id: string;
+  label: string;
+  contig: string;
+  recommended: boolean;
+}
+
+export interface ContigSuggestions {
+  chains: string[];
+  options: ContigOption[];
+  processed_coords: boolean;
+}
+
+export async function fetchContigSuggestions(file: File, token: string): Promise<ContigSuggestions> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/api/rfdiffusion/contig-suggestions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!res.ok) {
+    return {
+      chains: [],
+      options: [{ id: "custom", label: "직접 입력", contig: "", recommended: true }],
+      processed_coords: true,
+    };
+  }
+  return res.json();
+}
+
 export interface PipelineResponse {
   retentionDays: number;
   pipelines: PipelineMeta[];
