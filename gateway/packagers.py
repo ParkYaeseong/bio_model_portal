@@ -110,10 +110,22 @@ def package_colabfold(output: dict) -> str:
 def package_proteinmpnn(output: dict) -> str:
     def build(tar: tarfile.TarFile) -> None:
         _add_raw_json(tar, output)
-        for idx, entry in enumerate(output.get("sequences") or []):
-            text = entry.get("fasta") or entry.get("sequence") if isinstance(entry, dict) else None
-            if text:
-                _add_text(tar, f"design_{idx:03d}.fasta", str(text))
+        # ProteinMPNN designs SEQUENCES (not structures). The worker returns the
+        # full FASTA as `raw_fasta` and per-design entries under `samples`
+        # ({name,header,sequence}); an older shape used `sequences`. Materialize
+        # the FASTA so the result isn't json-only.
+        raw_fasta = output.get("raw_fasta")
+        if isinstance(raw_fasta, str) and raw_fasta.strip():
+            _add_text(tar, "proteinmpnn.fasta", raw_fasta)
+        for idx, entry in enumerate(output.get("samples") or output.get("sequences") or []):
+            if not isinstance(entry, dict):
+                continue
+            seq = entry.get("sequence") or entry.get("fasta")
+            if not seq:
+                continue
+            name = str(entry.get("name") or f"design_{idx:03d}")
+            text = str(seq) if str(seq).startswith(">") else f">{entry.get('header') or name}\n{seq}\n"
+            _add_text(tar, f"{name}.fasta", text)
         _add_streams(tar, output)
 
     return _build(build)
