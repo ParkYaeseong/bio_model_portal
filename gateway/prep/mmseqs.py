@@ -19,6 +19,14 @@ def build_input(payload: dict) -> dict:
             if name.lower().endswith((".fasta", ".fa", ".faa", ".fna")):
                 out["query_fasta"] = data.decode("utf-8", errors="replace")
                 break
+        else:
+            # No FASTA in the archive: if the user uploaded a structure (PDB/CIF),
+            # recover the query sequence from its longest chain (like BioEmu).
+            from .sequence import sequence_from_structure
+
+            seq = sequence_from_structure(out)
+            if seq:
+                out["query_fasta"] = f">query\n{seq}\n"
     out.setdefault("task", "search")
     out.setdefault("target_db", "uniref90")
     out.pop("input_archive", None)

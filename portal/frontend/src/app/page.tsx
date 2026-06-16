@@ -946,11 +946,28 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         <div className="mt-4 flex flex-wrap gap-3">
           <label className="flex cursor-pointer items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-700 shadow-sm">
             파일 선택
-            <input type="file" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} />
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                onFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </label>
           <label className="flex cursor-pointer items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-700 shadow-sm">
             폴더 업로드
-            <input type="file" className="hidden" multiple ref={folderInputRef} onChange={(e) => onFolder(e.target.files)} />
+            <input
+              type="file"
+              className="hidden"
+              multiple
+              ref={folderInputRef}
+              onChange={(e) => {
+                onFolder(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </label>
         </div>
         {uploads.length > 0 ? (
@@ -1055,7 +1072,10 @@ function DiffdockJobsEditor({ jobs, onChange, onFileChange, onRemoveJob }: Diffd
                 type="file"
                 accept=".pdb,.cif"
                 className="mt-1 w-full text-xs"
-                onChange={(e) => onFileChange(index, "protein", e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  onFileChange(index, "protein", e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
               />
               <p className="mt-1 text-[11px] text-slate-400">파일을 선택하면 경로가 자동으로 설정됩니다.</p>
             </div>
@@ -1088,7 +1108,10 @@ function DiffdockJobsEditor({ jobs, onChange, onFileChange, onRemoveJob }: Diffd
                     type="file"
                     accept=".sdf"
                     className="mt-2 w-full text-xs"
-                    onChange={(e) => onFileChange(index, "ligand", e.target.files?.[0] ?? null)}
+                    onChange={(e) => {
+                      onFileChange(index, "ligand", e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
                   />
                 </>
               ) : (
