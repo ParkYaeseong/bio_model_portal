@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import html
 import json
+import re
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -45,6 +47,11 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+
+# Identity headers are produced solely by this gateway from the verified
+# session. Any inbound copy is dropped before proxying so a client cannot spoof
+# an identity by sending these headers itself.
+IDENTITY_HEADERS = {"x-kbf-user", "x-kbf-email", "x-kbf-name", "x-kbf-auth"}
 
 
 def _sign_payload(secret_key: str, payload: str) -> str:
@@ -144,8 +151,15 @@ def _redirect_response(location: str) -> GatewayResponse:
     return GatewayResponse(body=b"", status_code=302, headers={"Location": location})
 
 
+_SAFE_ORIGIN_RE = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d+)?$")
+
+
 def _build_logout_bridge_html(parent_origin: str, request_id: str) -> str:
-    safe_parent_origin = parent_origin or "*"
+    # parent_origin/request_id are attacker-controllable query-string values.
+    # Never interpolate them into the <script> body (a `</script>` payload would
+    # break out -> XSS). Restrict the origin to a strict https origin and pass
+    # both via HTML-escaped data-* attributes, read from JS at runtime.
+    safe_parent_origin = parent_origin if _SAFE_ORIGIN_RE.match(parent_origin or "") else "*"
     safe_request_id = request_id or ""
     return f"""<!doctype html>
 <html lang="en">
@@ -153,11 +167,11 @@ def _build_logout_bridge_html(parent_origin: str, request_id: str) -> str:
     <meta charset="utf-8">
     <title>logout-bridge</title>
   </head>
-  <body>logout-bridge:ok
+  <body data-parent-origin="{html.escape(safe_parent_origin, quote=True)}" data-request-id="{html.escape(safe_request_id, quote=True)}">logout-bridge:ok
     <script>
       (function () {{
-        var parentOrigin = {safe_parent_origin!r};
-        var requestId = {safe_request_id!r};
+        var parentOrigin = document.body.dataset.parentOrigin || '*';
+        var requestId = document.body.dataset.requestId || '';
         try {{
           if (window.parent && window.parent !== window) {{
             window.parent.postMessage({{
@@ -294,9 +308,18 @@ class KbfGatewayApp:
         for key, value in ctx.headers.items():
             if key.lower() in {"host", "cookie"}:
                 continue
+            if key.lower() in IDENTITY_HEADERS:
+                continue  # never forward client-supplied identity headers
             upstream_headers[key] = value
         upstream_headers["X-Forwarded-Host"] = ctx.host
         upstream_headers["X-Forwarded-Proto"] = ctx.scheme
+        # This gateway is the sole producer of identity headers: inject the
+        # authoritative values from the verified session (mirrors /auth/verify).
+        kbf_user = ctx.session.get("kbf_user")
+        if isinstance(kbf_user, dict):
+            upstream_headers.update(_identity_headers(kbf_user))
+            if self.settings.forward_auth_secret:
+                upstream_headers["X-KBF-Auth"] = self.settings.forward_auth_secret
 
         try:
             upstream = requests.request(

@@ -16,6 +16,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB.name}"
 # Isolate from the deployed .env so the gateway-secret check is controlled
 # explicitly per test rather than inherited from the running deployment.
 os.environ["KBF_FORWARD_AUTH_SECRET"] = ""
+# These tests exercise the no-secret code path; opt into the explicit dev flag
+# so the header is honored. Production leaves this False -> fails closed.
+os.environ["KBF_ALLOW_INSECURE_SSO_HEADER"] = "true"
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -92,6 +95,19 @@ class HeaderIdentityTests(unittest.TestCase):
             self.assertIn("sub-ok", user.username)
         finally:
             auth.settings.kbf_forward_auth_secret = original
+
+    def test_fails_closed_when_no_secret_and_no_dev_optin(self) -> None:
+        # Misconfig (secret env missing) must NOT silently trust X-KBF-User.
+        orig_secret = auth.settings.kbf_forward_auth_secret
+        orig_flag = auth.settings.kbf_allow_insecure_sso_header
+        auth.settings.kbf_forward_auth_secret = ""
+        auth.settings.kbf_allow_insecure_sso_header = False
+        try:
+            with self.assertRaises(HTTPException):
+                auth.get_current_user(db=self.db, token=None, x_kbf_user="sub-x", x_kbf_auth=None)
+        finally:
+            auth.settings.kbf_forward_auth_secret = orig_secret
+            auth.settings.kbf_allow_insecure_sso_header = orig_flag
 
     def test_jwt_still_works_without_header(self) -> None:
         local = models.User(username="alice", password_hash=auth.hash_password("pw"))

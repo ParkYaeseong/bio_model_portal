@@ -112,6 +112,35 @@ def test_authenticated_api_request_proxies_to_upstream_backend(client, monkeypat
     assert response.get_data(as_text=True) == "[]"
 
 
+def test_proxy_drops_client_supplied_identity_headers(app, client, monkeypatch: pytest.MonkeyPatch):
+    """A client cannot spoof identity by sending X-KBF-* headers: the proxy
+    strips inbound copies and injects the authoritative session identity."""
+    _login_session(client)
+    captured: dict = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["headers"] = kwargs.get("headers", {})
+        return SimpleNamespace(status_code=200, content=b"ok", headers={})
+
+    monkeypatch.setattr("app.requests.request", fake_request)
+
+    response = app.handle_request(
+        "GET",
+        "/api/projects",
+        headers={
+            "host": "rbpfinder.k-biofoundrycopilot.duckdns.org",
+            "cookie": client._cookie_header(),
+            "x-kbf-user": "attacker",       # forged
+            "x-kbf-auth": "forged-secret",  # forged
+        },
+    )
+
+    assert response.status_code == 200
+    sent = {k.lower(): v for k, v in captured["headers"].items()}
+    assert sent.get("x-kbf-user") == "user-1"          # authoritative session sub
+    assert "x-kbf-auth" not in sent                    # no secret configured -> not injected, forged dropped
+
+
 def test_logout_bridge_clears_session_cookie_and_returns_completion_html(client):
     _login_session(client)
 

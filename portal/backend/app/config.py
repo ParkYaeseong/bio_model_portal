@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # process forging the header directly against 127.0.0.1. Empty disables the
     # check (local dev / tests).
     kbf_forward_auth_secret: str = Field(default="", env="KBF_FORWARD_AUTH_SECRET")
+    # Fail closed by default: if no forward-auth secret is configured, the
+    # X-KBF-User identity header is NOT trusted unless this dev opt-in is set.
+    # Prevents a missing-secret misconfig from silently disabling anti-spoofing.
+    kbf_allow_insecure_sso_header: bool = Field(default=False, env="KBF_ALLOW_INSECURE_SSO_HEADER")
 
     runpod_api_key: str | None = Field(default=None, env="RUNPOD_API_KEY")
     runpod_base: str = Field(default="https://api.runpod.ai/v2", env="RUNPOD_BASE")

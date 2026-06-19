@@ -95,6 +95,11 @@ def get_current_user(
         if expected_secret:
             if not x_kbf_auth or not hmac.compare_digest(x_kbf_auth, expected_secret):
                 raise credentials_exception
+        elif not settings.kbf_allow_insecure_sso_header:
+            # Fail closed: no shared secret configured and the dev opt-in is off,
+            # so we cannot prove the header came from the gateway. Refuse rather
+            # than trust a potentially spoofed identity.
+            raise credentials_exception
         # The reserved prefix is added by us, never present in a genuine OIDC
         # sub — its presence means someone is trying to smuggle an identity.
         if sub.startswith(SSO_USERNAME_PREFIX):
