@@ -11,6 +11,24 @@ type FetchOptions = {
   body?: BodyInit;
 };
 
+// Thrown when the SSO session is missing or expired. Callers surface this as a
+// "로그인 하세요" prompt instead of a generic error.
+export class AuthError extends Error {
+  constructor(message = "로그인이 필요합니다. 다시 로그인 해주세요.") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+// The portal sits behind a Caddy forward_auth SSO gateway. When the session is
+// gone the backend answers 401, and same-origin /api calls get redirected to
+// the login flow — both mean "re-authenticate".
+function assertAuthenticated(response: Response): void {
+  if (response.status === 401 || response.redirected) {
+    throw new AuthError();
+  }
+}
+
 async function apiFetch<T>(path: string, token?: string, options: FetchOptions = {}): Promise<T> {
   const headers: Record<string, string> = options.headers ? { ...options.headers } : {};
   if (!(options.body instanceof FormData)) {
@@ -24,6 +42,7 @@ async function apiFetch<T>(path: string, token?: string, options: FetchOptions =
     headers,
     body: options.body,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || "요청이 실패했습니다.");
@@ -74,8 +93,9 @@ export const deleteJob = (jobId: string, token: string) =>
 
 export async function downloadArtifact(jobId: string, artifactId: string, token: string) {
   const response = await fetch(`${API_BASE}/api/jobs/${jobId}/artifacts/${artifactId}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     throw new Error("파일 다운로드에 실패했습니다.");
   }
@@ -85,8 +105,9 @@ export async function downloadArtifact(jobId: string, artifactId: string, token:
 
 export async function downloadArchive(jobId: string, token: string) {
   const response = await fetch(`${API_BASE}/api/jobs/${jobId}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     throw new Error("결과를 다운로드할 수 없습니다.");
   }

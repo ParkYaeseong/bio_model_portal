@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import JSZip from "jszip";
 import ReactMarkdown from "react-markdown";
@@ -9,6 +9,7 @@ import {
   PipelineMeta,
   JobResponse,
   ContigOption,
+  AuthError,
   fetchPipelines,
   fetchJobs,
   fetchContigSuggestions,
@@ -16,8 +17,6 @@ import {
   deleteJob,
   downloadArchive,
   downloadArtifact,
-  login,
-  register,
 } from "@/lib/api";
 import { triggerDownload } from "@/lib/download";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
@@ -102,235 +101,69 @@ function acceptedFiles(pipeline: PipelineMeta): { accept: string; hint: string }
 }
 
 export default function HomePage() {
-  const [token, setToken] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
+  // Access is gated upstream by the Keycloak SSO forward_auth gateway, and the
+  // backend identifies each user from the gateway-injected X-KBF-User header —
+  // so the browser holds no token. Clear any stale token from the old
+  // shared-account design so it can never be sent.
   useEffect(() => {
-    const saved = window.localStorage.getItem("portal-token");
-    if (saved) {
-      setToken(saved);
-    }
+    window.localStorage.removeItem("portal-token");
   }, []);
 
-  // Auto-login with the shared SSO-gated account when no token is present.
-  // Credentials live server-side only; we call the /bootstrap-login route
-  // handler which performs the login and returns just the access token, so no
-  // secret is ever shipped to the browser bundle. Failures fall through to the
-  // normal login form.
-  useEffect(() => {
-    if (token) return;
-    if (window.localStorage.getItem("portal-token")) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/bootstrap-login", { method: "POST" });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled || !data?.access_token) return;
-        window.localStorage.setItem("portal-token", data.access_token);
-        setToken(data.access_token);
-      } catch {
-        // Ignore: fall through to the manual login form.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  const handleLogin = async (username: string, password: string) => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      const data = await login(username, password);
-      setToken(data.access_token);
-      window.localStorage.setItem("portal-token", data.access_token);
-    } catch (error: any) {
-      setAuthError(error.message || "로그인 중 오류가 발생했습니다.");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleRegister = async (username: string, password: string) => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await register(username, password);
-      await handleLogin(username, password);
-    } catch (error: any) {
-      setAuthError(error.message || "회원가입 중 오류가 발생했습니다.");
-      setAuthLoading(false);
-    }
-  };
-
+  // Real logout = end the SSO session at the gateway (Keycloak end-session),
+  // not just drop local state.
   const handleLogout = () => {
-    window.localStorage.removeItem("portal-token");
-    setToken(null);
-  };
-
-  if (!token) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-brand-50 to-white px-6 py-12">
-        <div className="w-full max-w-4xl rounded-3xl bg-white p-12 shadow-2xl ring-1 ring-slate-100">
-          <h1 className="text-3xl font-semibold text-slate-900">RunPod 구조 분석 허브</h1>
-          <p className="mt-2 text-slate-600">하나의 계정으로 AlphaFold2, DiffDock, PHASTEST를 관리하세요.</p>
-          <AuthSwitcher
-            mode={authMode}
-            onModeChange={setAuthMode}
-            onLogin={handleLogin}
-            onRegister={handleRegister}
-            loading={authLoading}
-            error={authError}
-          />
-        </div>
-      </main>
-    );
-  }
-
-  return <Dashboard token={token} onLogout={handleLogout} />;
-}
-
-type AuthProps = {
-  mode: "login" | "register";
-  onModeChange: (mode: "login" | "register") => void;
-  onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (username: string, password: string) => Promise<void>;
-  loading: boolean;
-  error: string | null;
-};
-
-function AuthSwitcher({ mode, onModeChange, onLogin, onRegister, loading, error }: AuthProps) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLocalError(null);
-    if (mode === "register" && password !== confirm) {
-      setLocalError("비밀번호 확인이 일치하지 않습니다.");
-      return;
-    }
-    if (mode === "register") {
-      if (password.length < 6) {
-        setLocalError("비밀번호는 최소 6자 이상이어야 합니다.");
-        return;
-      }
-      if (password.length > 72) {
-        setLocalError("비밀번호는 최대 72자까지 가능합니다.");
-        return;
-      }
-    }
-    if (!username.trim() || !password.trim()) {
-      setLocalError("아이디와 비밀번호를 모두 입력하세요.");
-      return;
-    }
-    if (mode === "login") {
-      onLogin(username, password);
-    } else {
-      onRegister(username, password);
-    }
+    window.location.href = "/logout";
   };
 
   return (
-    <div className="mt-8 grid gap-8 md:grid-cols-2">
-      <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl border border-slate-100 p-8">
-        <div>
-          <label className="text-sm font-semibold text-slate-600">아이디</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-600">비밀번호</label>
-          <input
-            type="password"
-            className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <p className="mt-1 text-xs text-slate-500">6~72자 사이의 비밀번호를 사용하세요.</p>
-        </div>
-        {mode === "register" && (
-          <div>
-            <label className="text-sm font-semibold text-slate-600">비밀번호 확인</label>
-            <input
-              type="password"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-            />
-          </div>
-        )}
-        {(localError || error) && <p className="text-sm text-rose-600">{localError || error}</p>}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-2xl bg-brand-600 px-4 py-3 text-white shadow-lg shadow-brand-200 transition hover:bg-brand-500 disabled:opacity-50"
+    <>
+      <Dashboard onLogout={handleLogout} onAuthExpired={() => setSessionExpired(true)} />
+      {sessionExpired && <SessionExpiredModal />}
+    </>
+  );
+}
+
+function SessionExpiredModal() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-6">
+      <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
+        <h2 className="text-xl font-semibold text-slate-900">세션이 만료되었습니다</h2>
+        <p className="mt-2 text-slate-600">로그인 하세요.</p>
+        <a
+          href="/login"
+          className="mt-6 inline-block rounded-2xl bg-brand-600 px-6 py-3 text-white shadow-lg shadow-brand-200 transition hover:bg-brand-500"
         >
-          {loading ? "처리 중..." : mode === "login" ? "로그인" : "회원가입"}
-        </button>
-      </form>
-      <div className="rounded-2xl bg-slate-50 p-8">
-        <p className="text-sm font-semibold text-brand-600">한 곳에서 세 가지 파이프라인</p>
-        <h2 className="mt-2 text-2xl font-semibold text-slate-900">AlphaFold2 · DiffDock · PHASTEST</h2>
-        <p className="mt-4 text-slate-600">
-          RunPod Serverless 위에 구축된 세 개의 워크로드를 클릭 몇 번으로 실행합니다. 업로드한 데이터와 결과는 암호화된 파일 시스템에 저장되며, 7일 후 자동으로 정리됩니다.
-        </p>
-        <div className="mt-6 space-y-4 text-sm text-slate-600">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">1</span>
-            <div>
-              <p className="font-semibold">파일 또는 폴더 업로드</p>
-              <p>웹 폴더 업로드 버튼으로 실험 세트를 한 번에 올릴 수 있습니다.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">2</span>
-            <div>
-              <p className="font-semibold">실시간 상태 추적</p>
-              <p>RunPod job ID와 진행 상태를 초 단위로 확인하세요.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">3</span>
-            <div>
-              <p className="font-semibold">결과 뷰어</p>
-              <p>Protein viewer, DiffDock pose 리스트, PHASTEST HTML 보고서를 웹에서 바로 확인합니다.</p>
-            </div>
-          </div>
-        </div>
-        <div className="mt-8 flex items-center gap-3 text-sm text-slate-500">
-          <span className="font-semibold">계정이 없나요?</span>
-          <button className="text-brand-600 underline" onClick={() => onModeChange(mode === "login" ? "register" : "login")}>
-            {mode === "login" ? "회원가입으로 전환" : "로그인으로 전환"}
-          </button>
-        </div>
+          로그인
+        </a>
       </div>
     </div>
   );
 }
 
 type DashboardProps = {
-  token: string;
   onLogout: () => void;
+  onAuthExpired: () => void;
 };
 
-function Dashboard({ token, onLogout }: DashboardProps) {
-  const { data: pipelineData } = useSWR(token ? ["pipelines", token] : null, ([, t]) => fetchPipelines(t as string));
+function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
+  // Identity travels in the gateway-injected header, so API calls carry no
+  // bearer token; the empty string disables the Authorization header.
+  const token = "";
+
+  const handleAuthError = useCallback(
+    (error: unknown) => {
+      if (error instanceof AuthError) onAuthExpired();
+    },
+    [onAuthExpired]
+  );
+
+  const { data: pipelineData } = useSWR(["pipelines"], () => fetchPipelines(token), { onError: handleAuthError });
   const { data: jobs, mutate: refreshJobs, isLoading: jobsLoading } = useSWR(
-    token ? ["jobs", token] : null,
-    ([, t]) => fetchJobs(t as string),
-    { refreshInterval: 15000 }
+    ["jobs"],
+    () => fetchJobs(token),
+    { refreshInterval: 15000, onError: handleAuthError }
   );
 
   const [selectedPipelineKey, setSelectedPipelineKey] = useState<string | null>(null);
@@ -591,6 +424,7 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       setCustomContig("");
       await refreshJobs();
     } catch (error: any) {
+      handleAuthError(error);
       setUploadError(error.message || "작업 생성 중 오류가 발생했습니다.");
     } finally {
       setIsSubmitting(false);
@@ -598,18 +432,33 @@ function Dashboard({ token, onLogout }: DashboardProps) {
   };
 
   const handleDownload = async (jobId: string) => {
-    const blob = await downloadArchive(jobId, token);
-    triggerDownload(blob, `${jobId}.tar.gz`);
+    try {
+      const blob = await downloadArchive(jobId, token);
+      triggerDownload(blob, `${jobId}.tar.gz`);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
   };
 
   const handleArtifactDownload = async (jobId: string, artifactId: string, filename: string) => {
-    const blob = await downloadArtifact(jobId, artifactId, token);
-    triggerDownload(blob, filename);
+    try {
+      const blob = await downloadArtifact(jobId, artifactId, token);
+      triggerDownload(blob, filename);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
   };
 
   const handleDelete = async (jobId: string) => {
     if (!confirm("정말 삭제하시겠습니까?")) return;
-    await deleteJob(jobId, token);
+    try {
+      await deleteJob(jobId, token);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
     if (jobId === selectedJobId) {
       setSelectedJobId(null);
     }

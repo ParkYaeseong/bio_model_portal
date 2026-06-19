@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 from . import structure
+from .defaults import apply_defaults
 
 # Keys passed through to the worker unchanged when present in the payload.
 _PASSTHROUGH = (
@@ -54,6 +55,10 @@ def build_input(payload: dict) -> dict:
     Preprocesses the PDB (strip non-positive resseq, renumber from 1) so weird
     numbering / HETATM is sanitized before reaching the worker.
     """
+    # Pin model defaults (temp, num_seq, batch, backbone_noise) so blanks become
+    # explicit values here instead of relying on the worker's implicit defaults.
+    payload = apply_defaults(payload, "proteinmpnn")
+
     out: dict[str, Any] = {}
 
     chains = _chains_list(payload)

@@ -41,3 +41,6 @@ yarn-error.log*
 *.log
 gateway/.env
 portal/frontend/.env.production
+*.env.bak*
+.env.bak.*
+portal/frontend/tsconfig.tsbuildinfo

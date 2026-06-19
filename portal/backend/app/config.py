@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="change-me", env="SECRET_KEY")
     access_token_expire_minutes: int = 60 * 24
     algorithm: str = "HS256"
+    # Shared secret the SSO forward_auth gateway attaches (X-KBF-Auth) so the
+    # backend only honors X-KBF-User from the gateway, not from a co-located
+    # process forging the header directly against 127.0.0.1. Empty disables the
+    # check (local dev / tests).
+    kbf_forward_auth_secret: str = Field(default="", env="KBF_FORWARD_AUTH_SECRET")
 
     runpod_api_key: str | None = Field(default=None, env="RUNPOD_API_KEY")
     runpod_base: str = Field(default="https://api.runpod.ai/v2", env="RUNPOD_BASE")

@@ -52,6 +52,8 @@ def sequence_from_structure(payload: dict) -> str:
 def build_folding_input(payload: dict, *, model: str) -> dict:
     """Sequence-input models (ESMFold/ColabFold): pass the sequence through, or
     recover it from an uploaded PDB/CIF (longest chain) when none was typed."""
+    from .defaults import apply_defaults
+
     out = dict(payload)
     has_seq = bool(str(out.get("sequence", "") or "").strip()) or bool(out.get("sequences"))
     if not has_seq:
@@ -62,6 +64,10 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
             raise ValueError(
                 f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
             )
+    # ColabFold has known, worker-accepted knobs; pin their defaults. ESMFold and
+    # AlphaFold2 are left untouched (worker param names unverified / UI-required).
+    if model == "ColabFold":
+        out = apply_defaults(out, "colabfold")
     out.pop("input_archive", None)
     return out
 
@@ -72,11 +78,13 @@ def build_bioemu_input(payload: dict) -> dict:
     Accepts either a typed `sequence` or an uploaded structure (PDB/CIF) — in the
     latter case the sequence is extracted from the structure's longest chain.
     """
+    from .defaults import apply_defaults
+
     seq = str(payload.get("sequence", "") or "").strip()
     if not seq:
         seq = sequence_from_structure(payload)
     validate_protein_sequence(seq, model="BioEmu")
-    out = dict(payload)
+    out = apply_defaults(dict(payload), "bioemu")  # pin num_samples / model_name
     out["sequence"] = seq
     out.pop("input_archive", None)
     return out

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from prep import structure
+from prep.defaults import apply_defaults
 
 
 def build_input(payload: dict) -> dict:
@@ -11,6 +12,7 @@ def build_input(payload: dict) -> dict:
     - Pass through target_id, nstruct, extra_flags, timeout_s.
     - Drop input_archive from the returned dict.
     """
+    payload = apply_defaults(payload, "rosetta_relax")  # pin nstruct default
     out: dict = {}
 
     # Determine PDB content
