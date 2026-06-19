@@ -44,3 +44,5 @@ portal/frontend/.env.production
 *.env.bak*
 .env.bak.*
 portal/frontend/tsconfig.tsbuildinfo
+sso/.env
+sso/.venv/
