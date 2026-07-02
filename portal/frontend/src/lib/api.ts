@@ -167,6 +167,7 @@ export interface PipelineMeta {
     options?: Array<{ value: string; label: string }>;
     placeholder?: string;
     helper?: string;
+    minimum?: number | null;
   }>;
 }
 

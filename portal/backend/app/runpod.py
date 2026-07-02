@@ -20,6 +20,7 @@ class InputField:
     options: list[dict[str, str]] | None = None
     placeholder: str | None = None
     helper: str | None = None
+    minimum: float | None = None  # for number fields: reject values below this
 
 
 @dataclass
@@ -82,6 +83,7 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 label="모델당 예측 수 (멀티머)",
                 field_type="number",
                 placeholder="1",
+                minimum=1,
                 helper="Multimer일 때 모델당 예측 개수 (기본 1). Monomer에서는 무시됩니다. 참고: AlphaFold2는 recycle 횟수·모델 수 자체는 조절할 수 없습니다.",
             ),
             InputField(
@@ -324,6 +326,7 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 label="Recycle 횟수",
                 field_type="number",
                 placeholder="3",
+                minimum=1,
                 helper="비워두면 기본값 3.",
             ),
             InputField(
@@ -331,6 +334,7 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 label="모델 수",
                 field_type="number",
                 placeholder="5",
+                minimum=1,
                 helper="비워두면 기본값 5.",
             ),
             InputField(

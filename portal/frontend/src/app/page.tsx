@@ -172,6 +172,10 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
   const [sequence, setSequence] = useState("");
   const [title, setTitle] = useState("새로운 작업");
   const [paramState, setParamState] = useState<Record<string, string>>({ model_preset: "monomer", db_preset: "full_dbs" });
+  // Multimer/complex chain editor: one sequence per chain, assembled on submit
+  // (AF2 -> multi-record FASTA, ColabFold -> ':'-joined single record).
+  const [multimerChains, setMultimerChains] = useState<string[]>(["", ""]);
+  const [colabfoldMultimer, setColabfoldMultimer] = useState(false);
   const [uploads, setUploads] = useState<UploadEntry[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [diffdockJobs, setDiffdockJobs] = useState<DiffdockJobInput[]>([createBlankDiffdockJob()]);
@@ -211,7 +215,13 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
     setContigOptions([]);
     setContigChoice("custom");
     setCustomContig("");
+    setMultimerChains(["", ""]);
+    setColabfoldMultimer(false);
   }, [selectedPipeline?.key]);
+
+  const multimerActive =
+    (selectedPipeline?.key === "alphafold" && paramState.model_preset === "multimer") ||
+    (selectedPipeline?.key === "colabfold" && colabfoldMultimer);
 
   const handlePasswordPersist = (pipelineKey: string, name: string, value: string) => {
     if (typeof window === "undefined") return;
@@ -313,6 +323,18 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
     if (!selectedPipeline) return;
     const normalizedParams: Record<string, unknown> = { ...paramState };
 
+    // Reject number inputs below their declared minimum (e.g. 0 / negative counts).
+    for (const field of selectedPipeline.inputFields) {
+      if (field.field_type !== "number" || field.minimum == null) continue;
+      const raw = (paramState[field.name] ?? "").trim();
+      if (raw === "") continue;
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num < field.minimum) {
+        setUploadError(`${translate(field.label)}은(는) ${field.minimum} 이상이어야 합니다.`);
+        return;
+      }
+    }
+
     const jobSpecificUploads: UploadEntry[] = [];
 
     if (selectedPipeline.key === "diffdock") {
@@ -401,6 +423,20 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
       return;
     }
 
+    // Assemble the sequence from the per-chain multimer editor when active.
+    let effectiveSequence = sequence.trim();
+    if (multimerActive) {
+      const chains = multimerChains.map((c) => c.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+      if (chains.length < 2) {
+        setUploadError("멀티머(복합체)는 서열이 있는 체인을 2개 이상 입력하세요.");
+        return;
+      }
+      effectiveSequence =
+        selectedPipeline.key === "colabfold"
+          ? chains.join(":")
+          : chains.map((seq, i) => `>chain_${i + 1}\n${seq}`).join("\n") + "\n";
+    }
+
     setUploadError(null);
     setIsSubmitting(true);
     try {
@@ -408,8 +444,8 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
       form.append("title", title);
       form.append("pipeline", selectedPipeline.key);
       form.append("parameters", JSON.stringify(normalizedParams));
-      if (selectedPipeline.supportsSequence && sequence.trim()) {
-        form.append("sequence", sequence.trim());
+      if (selectedPipeline.supportsSequence && effectiveSequence) {
+        form.append("sequence", effectiveSequence);
       }
       [...uploads, ...jobSpecificUploads].forEach((entry) => {
         form.append("files", entry.file, entry.relativePath);
@@ -417,6 +453,8 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
       await createJob(form, token);
       setUploads([]);
       setSequence("");
+      setMultimerChains(["", ""]);
+      setColabfoldMultimer(false);
       setDiffdockJobs([createBlankDiffdockJob()]);
       setPhastestConfig(defaultPhastestConfig);
       setContigOptions([]);
@@ -499,6 +537,11 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
                 onTitleChange={setTitle}
                 sequence={sequence}
                 onSequenceChange={setSequence}
+                multimerActive={multimerActive}
+                multimerChains={multimerChains}
+                onMultimerChainsChange={setMultimerChains}
+                colabfoldMultimer={colabfoldMultimer}
+                onColabfoldMultimerChange={setColabfoldMultimer}
                 paramState={paramState}
                 onParamChange={handleParamChange}
                 onPasswordPersist={handlePasswordPersist}
@@ -594,6 +637,11 @@ type SubmissionPanelProps = {
   onTitleChange: (value: string) => void;
   sequence: string;
   onSequenceChange: (value: string) => void;
+  multimerActive: boolean;
+  multimerChains: string[];
+  onMultimerChainsChange: (chains: string[]) => void;
+  colabfoldMultimer: boolean;
+  onColabfoldMultimerChange: (value: boolean) => void;
   paramState: Record<string, string>;
   onParamChange: (name: string, value: string) => void;
   onPasswordPersist?: (pipelineKey: string, name: string, value: string) => void;
@@ -625,6 +673,11 @@ function SubmissionPanel(props: SubmissionPanelProps) {
     onTitleChange,
     sequence,
     onSequenceChange,
+    multimerActive,
+    multimerChains,
+    onMultimerChainsChange,
+    colabfoldMultimer,
+    onColabfoldMultimerChange,
     diffdockJobs,
     onDiffdockJobsChange,
     onDiffdockFileChange,
@@ -706,6 +759,8 @@ function SubmissionPanel(props: SubmissionPanelProps) {
                 className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
                 placeholder={field.placeholder || ""}
                 value={paramState[field.name] || ""}
+                min={field.field_type === "number" && field.minimum != null ? field.minimum : undefined}
+                step={field.field_type === "number" ? 1 : undefined}
                 onChange={(e) => {
                   onParamChange(field.name, e.target.value);
                   if (field.field_type === "password") {
@@ -790,7 +845,29 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         </div>
       )}
 
-      {pipeline.supportsSequence && (
+      {pipeline.key === "colabfold" && (
+        <div className="mt-4">
+          <label className="text-sm font-semibold text-slate-600">예측 유형</label>
+          <div className="mt-1 inline-flex rounded-2xl border border-slate-200 p-1">
+            {[
+              { value: false, label: "Monomer (단일 체인)" },
+              { value: true, label: "Multimer (복합체)" },
+            ].map((opt) => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => onColabfoldMultimerChange(opt.value)}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  colabfoldMultimer === opt.value ? "bg-brand-500 text-white" : "text-slate-600 hover:text-brand-600"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {pipeline.supportsSequence && !multimerActive && (
         <div className="mt-4">
           <label className="text-sm font-semibold text-slate-600">서열 입력 (선택)</label>
           <textarea
@@ -798,8 +875,54 @@ function SubmissionPanel(props: SubmissionPanelProps) {
             rows={4}
             value={sequence}
             onChange={(e) => onSequenceChange(e.target.value)}
-            placeholder=">sp|/P12345 예시\nMVTES..."
+            placeholder={">sp|P12345 예시\nMVTES..."}
           />
+        </div>
+      )}
+      {pipeline.supportsSequence && multimerActive && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-semibold text-slate-600">체인별 서열 입력 (복합체)</label>
+            <span className="text-xs text-slate-400">
+              {pipeline.key === "colabfold" ? "체인을 콜론(:)으로 이어 예측합니다" : "체인마다 FASTA 레코드로 전송됩니다"}
+            </span>
+          </div>
+          <div className="mt-2 space-y-3">
+            {multimerChains.map((chain, index) => (
+              <div key={index} className="rounded-2xl border border-slate-200 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-brand-600">
+                    체인 {String.fromCharCode(65 + index)}
+                  </span>
+                  {multimerChains.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => onMultimerChainsChange(multimerChains.filter((_, i) => i !== index))}
+                      className="text-xs text-slate-400 underline hover:text-red-500"
+                    >
+                      삭제
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2 font-mono"
+                  rows={3}
+                  value={chain}
+                  onChange={(e) =>
+                    onMultimerChainsChange(multimerChains.map((c, i) => (i === index ? e.target.value : c)))
+                  }
+                  placeholder={`체인 ${String.fromCharCode(65 + index)} 아미노산 서열 (예: MVTES...)`}
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => onMultimerChainsChange([...multimerChains, ""])}
+            className="mt-3 rounded-full border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:border-brand-400"
+          >
+            + 체인 추가
+          </button>
         </div>
       )}
       {pipeline.key !== "diffdock" && (
