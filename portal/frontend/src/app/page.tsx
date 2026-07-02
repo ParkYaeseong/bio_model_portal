@@ -727,6 +727,8 @@ function SubmissionPanel(props: SubmissionPanelProps) {
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         {pipeline.inputFields
           .filter((field) => !(pipeline.key === "rfdiffusion" && field.name === "contigs"))
+          // AF2 model_preset is rendered as the prominent 예측 유형 toggle below.
+          .filter((field) => !(pipeline.key === "alphafold" && field.name === "model_preset"))
           .map((field) => (
           <div key={field.name}>
             <label className="text-sm font-semibold text-slate-600">{translate(field.label)}</label>
@@ -845,26 +847,38 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         </div>
       )}
 
-      {pipeline.key === "colabfold" && (
+      {(pipeline.key === "colabfold" || pipeline.key === "alphafold") && (
         <div className="mt-4">
           <label className="text-sm font-semibold text-slate-600">예측 유형</label>
           <div className="mt-1 inline-flex rounded-2xl border border-slate-200 p-1">
             {[
               { value: false, label: "Monomer (단일 체인)" },
               { value: true, label: "Multimer (복합체)" },
-            ].map((opt) => (
-              <button
-                key={String(opt.value)}
-                type="button"
-                onClick={() => onColabfoldMultimerChange(opt.value)}
-                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  colabfoldMultimer === opt.value ? "bg-brand-500 text-white" : "text-slate-600 hover:text-brand-600"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+            ].map((opt) => {
+              // AF2 drives the real model_preset param; ColabFold drives a UI-only flag.
+              const active =
+                pipeline.key === "alphafold" ? paramState.model_preset === "multimer" : colabfoldMultimer;
+              const setMultimer = (v: boolean) =>
+                pipeline.key === "alphafold"
+                  ? onParamChange("model_preset", v ? "multimer" : "monomer")
+                  : onColabfoldMultimerChange(v);
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  onClick={() => setMultimer(opt.value)}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    active === opt.value ? "bg-brand-500 text-white" : "text-slate-600 hover:text-brand-600"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
+          {pipeline.key === "alphafold" && (
+            <p className="mt-1 text-xs text-slate-500">Batch submissions must use a single preset.</p>
+          )}
         </div>
       )}
       {pipeline.supportsSequence && !multimerActive && (
