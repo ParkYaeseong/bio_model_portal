@@ -298,7 +298,7 @@ PIPELINES: dict[str, PipelineDefinition] = {
         label="ColabFold",
         description="ColabFold를 통한 AlphaFold2 추론 (로컬 MMseqs2 MSA 사용).",
         endpoint_attr="colabfold_endpoint_id",
-        instructions="아미노산 시퀀스를 붙여넣으세요 (FASTA 다중 레코드 가능).",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 여러 FASTA 레코드로 넣으면 각 서열이 독립적으로(배치) 예측됩니다.",
         input_fields=[
             InputField(
                 name="num_recycle",

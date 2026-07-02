@@ -49,6 +49,25 @@ def sequence_from_structure(payload: dict) -> str:
     return max(by_chain.values(), key=len).strip()
 
 
+_FASTA_SUFFIXES = (".fasta", ".fa", ".faa", ".fna")
+
+
+def _archive_has_fasta(input_archive: object) -> bool:
+    """True when input_archive carries FASTA input (not just a PDB/CIF).
+
+    AF2 multimer chains arrive as a FASTA file inside input_archive rather than
+    as an inline `sequence` — the portal tags such archives with kind
+    fasta_dir/fasta_paths (and lists the .fasta file_names)."""
+    if not isinstance(input_archive, dict):
+        return False
+    if input_archive.get("kind") in {"fasta_dir", "fasta_paths"}:
+        return True
+    names = input_archive.get("file_names") or []
+    if isinstance(names, str):
+        names = [names]
+    return any(str(n).lower().endswith(_FASTA_SUFFIXES) for n in names)
+
+
 def build_folding_input(payload: dict, *, model: str) -> dict:
     """Sequence-input models (ESMFold/ColabFold): pass the sequence through, or
     recover it from an uploaded PDB/CIF (longest chain) when none was typed."""
@@ -60,6 +79,11 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
         seq = sequence_from_structure(out)
         if seq:
             out["sequence"] = seq
+        elif model == "AlphaFold2" and _archive_has_fasta(out.get("input_archive")):
+            # AF2 multimer: chains are delivered as a FASTA inside input_archive,
+            # which the RunPod AF2 worker consumes directly. Pass the archive
+            # through instead of failing / dropping it.
+            return out
         else:
             raise ValueError(
                 f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
