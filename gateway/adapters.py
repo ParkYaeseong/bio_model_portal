@@ -77,7 +77,8 @@ def adapter_esmfold(payload: dict) -> dict:
 
 def adapter_alphafold(payload: dict) -> dict:
     from prep import sequence
-    return sequence.build_folding_input(payload, model="AlphaFold2")
+    out = sequence.build_folding_input(payload, model="AlphaFold2")
+    return sequence.assemble_alphafold_flags(out)
 
 
 def adapter_passthrough(payload: dict) -> dict:

@@ -96,6 +96,52 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
     return out
 
 
+# Portal AF2 knob -> run_alphafold.py flag. Stock DeepMind AlphaFold (absl flags)
+# has NO recycle or model-count flag; recycles are hardcoded and all 5 models run.
+# The only worker-verified tunables are these two.
+_AF2_FLAG_FIELDS = (
+    ("models_to_relax", "models_to_relax"),
+    ("num_multimer_predictions_per_model", "num_multimer_predictions_per_model"),
+)
+
+
+def assemble_alphafold_flags(payload: dict) -> dict:
+    """Fold the portal's AF2 knobs into the single `alphafold_extra_flags` CLI
+    string the DeepMind AlphaFold worker actually reads.
+
+    The worker (run_alphafold.py) consumes `alphafold_extra_flags` only — the
+    portal historically sent the free-text field as `extra_flags`, which the
+    worker silently ignored. This also maps the dedicated knobs
+    (models_to_relax, num_multimer_predictions_per_model) to their flags, and
+    drops the portal-only keys so the worker never sees unknown payload fields.
+    A flag a user already typed in the free-text field wins over the knob.
+    """
+    out = dict(payload)
+    user = " ".join(
+        str(out.pop(key, "") or "").strip()
+        for key in ("alphafold_extra_flags", "extra_flags")
+    ).strip()
+    parts: list[str] = []
+    for param_key, flag in _AF2_FLAG_FIELDS:
+        val = out.pop(param_key, None)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            continue
+        if f"--{flag}" in user:  # user set it explicitly in the free-text field
+            continue
+        if param_key == "num_multimer_predictions_per_model":
+            try:
+                val = int(val)
+            except (TypeError, ValueError):
+                continue
+            if val < 1:
+                continue
+        parts.append(f"--{flag}={val}")
+    combined = " ".join([*parts, user]).strip()
+    if combined:
+        out["alphafold_extra_flags"] = combined
+    return out
+
+
 def build_bioemu_input(payload: dict) -> dict:
     """Validate the protein sequence then build the BioEmu worker payload.
 

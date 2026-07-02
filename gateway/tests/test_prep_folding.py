@@ -79,3 +79,64 @@ def test_esmfold_fasta_archive_still_raises():
         sequence.build_folding_input(
             {"input_archive": _fasta_archive("fasta_paths")}, model="ESMFold"
         )
+
+
+def test_af2_extra_flags_renamed_to_alphafold_extra_flags():
+    # portal historically sent the free-text field as extra_flags; the worker
+    # only reads alphafold_extra_flags.
+    out = sequence.assemble_alphafold_flags(
+        {"sequence": "MKT", "model_preset": "monomer", "extra_flags": "--benchmark"}
+    )
+    assert "extra_flags" not in out
+    assert out["alphafold_extra_flags"] == "--benchmark"
+
+
+def test_af2_knobs_become_flags():
+    out = sequence.assemble_alphafold_flags(
+        {
+            "sequence": "MKT",
+            "model_preset": "multimer",
+            "models_to_relax": "none",
+            "num_multimer_predictions_per_model": 3,
+        }
+    )
+    assert "models_to_relax" not in out and "num_multimer_predictions_per_model" not in out
+    f = out["alphafold_extra_flags"]
+    assert "--models_to_relax=none" in f and "--num_multimer_predictions_per_model=3" in f
+
+
+def test_af2_blank_knobs_ignored():
+    out = sequence.assemble_alphafold_flags(
+        {"sequence": "MKT", "models_to_relax": "", "num_multimer_predictions_per_model": ""}
+    )
+    assert "alphafold_extra_flags" not in out
+
+
+def test_af2_bad_prediction_count_ignored():
+    out = sequence.assemble_alphafold_flags(
+        {"sequence": "MKT", "num_multimer_predictions_per_model": "abc"}
+    )
+    assert "alphafold_extra_flags" not in out
+
+
+def test_af2_user_flag_wins_over_knob():
+    out = sequence.assemble_alphafold_flags(
+        {"sequence": "MKT", "models_to_relax": "all", "extra_flags": "--models_to_relax=none"}
+    )
+    # knob is skipped because the user typed the flag explicitly
+    assert out["alphafold_extra_flags"].count("--models_to_relax") == 1
+    assert "--models_to_relax=none" in out["alphafold_extra_flags"]
+
+
+def test_af2_adapter_multimer_archive_preserved_with_flags():
+    from adapters import adapter_alphafold
+    out = adapter_alphafold(
+        {
+            "pipeline": "alphafold",
+            "model_preset": "multimer",
+            "models_to_relax": "none",
+            "input_archive": _fasta_archive("fasta_paths"),
+        }
+    )
+    assert "input_archive" in out  # multimer FASTA archive survives
+    assert "--models_to_relax=none" in out["alphafold_extra_flags"]
