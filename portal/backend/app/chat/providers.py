@@ -211,11 +211,13 @@ class GeminiProvider(Provider):
         return out
 
     def request(self, api_key: str, model: str, system: str, messages: list[dict], tools: list[dict]) -> dict:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        # Send the key in a header, not the query string — keys in URLs leak
+        # into proxy/server access logs.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
             resp = httpx.post(
                 url,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 timeout=_TIMEOUT,
                 json={
                     "systemInstruction": {"parts": [{"text": system}]},
