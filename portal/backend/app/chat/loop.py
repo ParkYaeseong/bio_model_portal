@@ -45,9 +45,17 @@ def run_chat(
     api_key: str,
     model: str,
     history: list[dict],
+    attachments: list[dict] | None = None,
     max_iters: int = MAX_ITERS,
 ) -> dict:
-    """Run the tool-calling loop and return {reply, tool_calls, model}."""
+    """Run the tool-calling loop and return {reply, tool_calls, model}.
+
+    ``attachments`` ([{name, base64}]) are the files the user attached in the
+    chat UI. They are injected into any ``run_model`` call the LLM makes (the
+    LLM chooses the pipeline/params; it never has to echo large base64 payloads
+    through its context), unless the LLM supplied files explicitly.
+    """
+    attachments = attachments or []
     tools = provider.format_tools(TOOLS)
     messages = provider.build_messages(history)
     collected: list[dict] = []
@@ -64,7 +72,12 @@ def run_chat(
         provider.append_assistant(messages, resp)
         results: list[dict] = []
         for call in parsed.tool_calls:
-            result = _execute_tool(db, user, call["name"], call["arguments"])
+            args = call["arguments"]
+            if call["name"] == "run_model" and attachments and not args.get("files"):
+                args = {**args, "files": attachments}
+            result = _execute_tool(db, user, call["name"], args)
+            # Record the LLM's own arguments (not the injected base64) so the
+            # response stays small and never echoes file contents back.
             collected.append({"name": call["name"], "arguments": call["arguments"], "result": result})
             results.append({"id": call["id"], "name": call["name"], "content": json.dumps(result, ensure_ascii=False)})
         provider.append_tool_results(messages, results)

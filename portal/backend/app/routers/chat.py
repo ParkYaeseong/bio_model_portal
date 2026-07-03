@@ -18,11 +18,17 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ChatAttachment(BaseModel):
+    name: str
+    base64: str
+
+
 class ChatRequest(BaseModel):
     provider: str
     api_key: str
     model: str | None = None
     messages: list[ChatMessage]
+    attachments: list[ChatAttachment] = []
 
 
 class ToolCall(BaseModel):
@@ -53,9 +59,22 @@ def chat(
     if not any(m["role"] == "user" and m["content"].strip() for m in history):
         raise HTTPException(status_code=400, detail="At least one user message is required.")
 
+    attachments = [{"name": a.name, "base64": a.base64} for a in payload.attachments]
+    if attachments:
+        # Tell the LLM which files are available so it knows to call run_model;
+        # the base64 payloads are injected server-side, never through its context.
+        names = ", ".join(a.name for a in payload.attachments)
+        for msg in reversed(history):
+            if msg["role"] == "user":
+                msg["content"] += (
+                    f"\n\n[첨부된 파일: {names}] — run_model 도구를 호출하면 이 파일들이 "
+                    "자동으로 모델 입력으로 사용됩니다."
+                )
+                break
+
     model = (payload.model or "").strip() or provider.default_model
     try:
-        result = chat_loop.run_chat(db, current_user, provider, api_key, model, history)
+        result = chat_loop.run_chat(db, current_user, provider, api_key, model, history, attachments=attachments)
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
     return ChatResponse(**result)

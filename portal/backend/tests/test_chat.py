@@ -133,6 +133,43 @@ def test_run_chat_tool_runs_as_the_authenticated_user():
         assert out_other["tool_calls"][0]["result"]["ok"] is False
 
 
+def test_run_chat_injects_attachments_into_run_model(monkeypatch):
+    import base64 as _b64
+
+    from app.mcp import tools as mcp_tools
+    from app.chat.providers import ParsedTurn
+
+    captured = {}
+
+    def fake_create(db_, *, user_id, title, pipeline, params, input_files=None, sequence=None):
+        captured["input_files"] = list(input_files or [])
+        j = models.Job(user_id=user_id, title=title, pipeline=pipeline, status="submitted")
+        db_.add(j); db_.commit(); db_.refresh(j)
+        return j
+
+    monkeypatch.setattr(mcp_tools.job_bridge, "create_step_job", fake_create)
+
+    class RunProvider(FakeProvider):
+        def parse(self, resp):
+            if resp["round"] == 1:
+                return ParsedTurn("", [{"id": "t1", "name": "run_model", "arguments": {"pipeline": "esmfold"}}], "tool_use")
+            return ParsedTurn("submitted", [], "end_turn")
+
+    with SessionLocal() as db:
+        u = _user(db)
+        attachments = [{"name": "seq.fasta", "base64": _b64.b64encode(b">a\nACDEFG").decode()}]
+        out = chat_loop.run_chat(
+            db, u, RunProvider(), "k", "fake-1",
+            [{"role": "user", "content": "이 파일로 돌려줘"}],
+            attachments=attachments,
+        )
+        assert out["tool_calls"][0]["result"]["ok"] is True
+        # The attached file reached run_model → create_step_job as an input file.
+        assert len(captured["input_files"]) == 1
+        # The recorded tool arguments do NOT contain the base64 payload.
+        assert "files" not in out["tool_calls"][0]["arguments"]
+
+
 def test_run_chat_hits_iteration_cap():
     with SessionLocal() as db:
         u = _user(db)

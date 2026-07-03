@@ -225,11 +225,17 @@ export type ChatToolCall = {
   result: Record<string, unknown>;
 };
 
+export type ChatAttachment = {
+  name: string;
+  base64: string;
+};
+
 export type ChatRequest = {
   provider: ChatProvider;
   api_key: string;
   model?: string;
   messages: ChatTurn[];
+  attachments?: ChatAttachment[];
 };
 
 export type ChatResponse = {
