@@ -9,6 +9,7 @@ from .config import get_settings
 from .database import Base, engine
 from .routers import assistant, auth, jobs, pipelines, rfdiffusion, users
 from .tasks import monitor
+from .workflow.monitor import workflow_monitor
 
 settings = get_settings()
 Base.metadata.create_all(bind=engine)
@@ -33,11 +34,13 @@ app.include_router(rfdiffusion.router)
 @app.on_event("startup")
 def start_monitor() -> None:
     monitor.start()
+    workflow_monitor.start()
 
 
 @app.on_event("shutdown")
 def stop_monitor() -> None:
     monitor.stop()
+    workflow_monitor.stop()
 
 
 @app.get("/health")
