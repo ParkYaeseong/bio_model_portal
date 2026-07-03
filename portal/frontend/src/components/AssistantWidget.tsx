@@ -19,6 +19,13 @@ type ChatMessage = {
 
 type Attachment = { name: string; base64: string; size: number };
 
+type Conversation = {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  updatedAt: number;
+};
+
 const PROVIDERS: { value: ChatProvider; label: string }[] = [
   { value: "anthropic", label: "Claude" },
   { value: "openai", label: "OpenAI" },
@@ -26,8 +33,30 @@ const PROVIDERS: { value: ChatProvider; label: string }[] = [
 ];
 
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024; // 40 MB total across attachments
+const CONV_KEY = "bmp_chat_conversations";
+const MAX_CONVERSATIONS = 30;
 
 const providerKeyStore = (provider: ChatProvider) => `bmp_chat_key_${provider}`;
+
+const loadConversations = (): Conversation[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CONV_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Conversation[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const persistConversations = (convs: Conversation[]) => {
+  if (typeof window === "undefined") return;
+  const trimmed = [...convs].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVERSATIONS);
+  window.localStorage.setItem(CONV_KEY, JSON.stringify(trimmed));
+};
+
+const newId = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
 
 function toolChip(call: ChatToolCall): string {
   const ok = call.result?.ok !== false;
@@ -70,18 +99,24 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const [input, setInput] = useState("");
   const [contextJobId, setContextJobId] = useState<string | null>(initialJobId ?? null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Conversation persistence (browser-only; never sent to our DB).
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
-  // Load persisted provider + key from the browser (never sent to our DB).
+  // Load persisted provider + key + conversations from the browser.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = (window.localStorage.getItem("bmp_chat_provider") as ChatProvider) || "anthropic";
     setProvider(saved);
     setApiKey(window.localStorage.getItem(providerKeyStore(saved)) || "");
+    setConversations(loadConversations());
   }, []);
 
   useEffect(() => {
@@ -101,33 +136,80 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   const contextJob = useMemo(() => jobs?.find((j) => j.id === contextJobId), [jobs, contextJobId]);
 
+  // --- Conversation management ---------------------------------------------
+
+  const upsertConversation = (id: string, msgs: ChatMessage[]) => {
+    const firstUser = msgs.find((m) => m.role === "user");
+    const title = (firstUser?.content || "새 대화").slice(0, 40);
+    setConversations((prev) => {
+      const others = prev.filter((c) => c.id !== id);
+      const next = [{ id, title, messages: msgs, updatedAt: Date.now() }, ...others];
+      persistConversations(next);
+      return next;
+    });
+  };
+
+  const startNewChat = () => {
+    setActiveConvId(null);
+    setMessages([]);
+    setAttachments([]);
+    setError(null);
+  };
+
+  const loadConversation = (id: string) => {
+    const conv = conversations.find((c) => c.id === id);
+    if (!conv) return;
+    setActiveConvId(id);
+    setMessages(conv.messages);
+    setAttachments([]);
+    setError(null);
+  };
+
+  const deleteConversation = (id: string) => {
+    setConversations((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      persistConversations(next);
+      return next;
+    });
+    if (activeConvId === id) startNewChat();
+  };
+
+  // --- Attachments ----------------------------------------------------------
+
   const addFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setError(null);
-    const incoming: Attachment[] = [];
-    for (const file of Array.from(fileList)) {
-      const name = (file as any).webkitRelativePath || file.name;
-      try {
-        incoming.push({ name, base64: await fileToBase64(file), size: file.size });
-      } catch {
-        setError(`${name} 을(를) 읽지 못했습니다.`);
+    setReading(true);
+    try {
+      const incoming: Attachment[] = [];
+      for (const file of Array.from(fileList)) {
+        const name = (file as any).webkitRelativePath || file.name;
+        try {
+          incoming.push({ name, base64: await fileToBase64(file), size: file.size });
+        } catch {
+          setError(`${name} 을(를) 읽지 못했습니다.`);
+        }
       }
+      setAttachments((prev) => {
+        const merged = [...prev, ...incoming];
+        const total = merged.reduce((s, a) => s + a.size, 0);
+        if (total > MAX_TOTAL_BYTES) {
+          setError("첨부 파일 총 용량이 40MB를 초과합니다.");
+          return prev;
+        }
+        return merged;
+      });
+    } finally {
+      setReading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (dirInputRef.current) dirInputRef.current.value = "";
     }
-    setAttachments((prev) => {
-      const merged = [...prev, ...incoming];
-      const total = merged.reduce((s, a) => s + a.size, 0);
-      if (total > MAX_TOTAL_BYTES) {
-        setError("첨부 파일 총 용량이 40MB를 초과합니다.");
-        return prev;
-      }
-      return merged;
-    });
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    if (dirInputRef.current) dirInputRef.current.value = "";
   };
 
   const removeAttachment = (idx: number) =>
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
+
+  // --- Send -----------------------------------------------------------------
 
   const handleSend = async () => {
     const text = input.trim();
@@ -136,6 +218,9 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
       setError("먼저 API 키를 입력하세요.");
       return;
     }
+    const convId = activeConvId ?? newId();
+    if (!activeConvId) setActiveConvId(convId);
+
     const decorated = contextJob
       ? `[작업 컨텍스트: job_id=${contextJob.id}, pipeline=${contextJob.pipeline}] ${text}`
       : text;
@@ -145,7 +230,6 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
     setLoading(true);
     setError(null);
 
-    // History sent to the API uses the decorated content for the new turn.
     const apiMessages = displayHistory.map((m, i) =>
       i === displayHistory.length - 1 ? { role: m.role, content: decorated } : { role: m.role, content: m.content },
     );
@@ -155,10 +239,12 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
         { provider, api_key: apiKey.trim(), messages: apiMessages, attachments: sentAttachments },
         token,
       );
-      setMessages((prev) => [
-        ...prev,
+      const finalMessages: ChatMessage[] = [
+        ...displayHistory,
         { role: "assistant", content: response.reply, toolCalls: response.tool_calls },
-      ]);
+      ];
+      setMessages(finalMessages);
+      upsertConversation(convId, finalMessages);
       setAttachments([]); // consumed by this turn
     } catch (err: any) {
       setError(err.message || "응답을 받지 못했습니다.");
@@ -166,6 +252,11 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
       setLoading(false);
     }
   };
+
+  const sortedConversations = useMemo(
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  );
 
   return (
     <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
@@ -179,6 +270,37 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             <button className="text-slate-400" onClick={() => setIsOpen(false)}>
               ✕
             </button>
+          </div>
+
+          {/* Conversation controls */}
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2">
+            <button
+              onClick={startNewChat}
+              className="rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
+            >
+              + 새 대화
+            </button>
+            <select
+              value={activeConvId ?? ""}
+              onChange={(e) => (e.target.value ? loadConversation(e.target.value) : startNewChat())}
+              className="min-w-0 flex-1 truncate rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
+            >
+              <option value="">대화 목록 ({sortedConversations.length})</option>
+              {sortedConversations.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+            {activeConvId && (
+              <button
+                onClick={() => deleteConversation(activeConvId)}
+                title="이 대화 삭제"
+                className="rounded-full border border-rose-200 px-2 py-1 text-xs text-rose-500"
+              >
+                🗑
+              </button>
+            )}
           </div>
 
           <div className="space-y-3 px-4 py-3 text-sm text-slate-600">
@@ -224,7 +346,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             <div className="max-h-72 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 p-3 text-xs">
               {messages.length === 0 && (
                 <p className="text-slate-400">
-                  예: “esmfold로 ACDEFG 접어줘” · “첨부한 파일로 alphafold 돌려줘” · “이 작업 결과 해석해줘”
+                  예: “esmfold로 ACDEFG 접어줘” · “첨부한 파일로 proteinmpnn 돌려줘” · “이 작업 결과 해석해줘”
                 </p>
               )}
               {messages.map((message, index) => (
@@ -264,7 +386,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
                     key={i}
                     className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600"
                   >
-                    📎 {a.name}
+                    📎 {a.name} ({(a.size / 1024).toFixed(0)}KB)
                     <button className="text-slate-400 hover:text-rose-500" onClick={() => removeAttachment(i)}>
                       ✕
                     </button>
@@ -303,6 +425,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
               >
                 📁 폴더
               </button>
+              {reading && <span className="text-slate-400">파일 읽는 중...</span>}
             </div>
 
             <textarea
@@ -314,10 +437,10 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             {error && <p className="text-xs text-rose-500">{error}</p>}
             <button
               className="w-full rounded-2xl bg-brand-600 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              disabled={loading || !input.trim()}
+              disabled={loading || reading || !input.trim()}
               onClick={handleSend}
             >
-              {loading ? "응답 생성 중..." : "보내기"}
+              {loading ? "응답 생성 중..." : reading ? "파일 읽는 중..." : "보내기"}
             </button>
           </div>
         </div>
