@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import JSZip from "jszip";
 import ReactMarkdown from "react-markdown";
@@ -513,6 +514,12 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
             <h1 className="text-2xl font-semibold text-slate-900">K-BioFoundry Orchestrator</h1>
           </div>
           <div className="flex items-center gap-3">
+            <Link
+              href="/mcp"
+              className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              AI 연결
+            </Link>
             <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
               로그아웃
             </button>

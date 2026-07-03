@@ -267,3 +267,23 @@ export const getWorkflowReport = (token: string, runId: string) =>
 
 export const cancelWorkflowRun = (token: string, runId: string) =>
   apiFetch<{ id: string; status: string }>(`/api/workflows/runs/${runId}/cancel`, token, { method: "POST" });
+
+export interface McpToken {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export const listMcpTokens = (token: string) =>
+  apiFetch<{ tokens: McpToken[] }>("/api/mcp/tokens", token);
+
+export const createMcpToken = (token: string, name: string) =>
+  apiFetch<McpToken & { token: string }>("/api/mcp/tokens", token, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+
+export const revokeMcpToken = (token: string, id: string) =>
+  apiFetch<{ ok: boolean }>(`/api/mcp/tokens/${id}/revoke`, token, { method: "POST" });
