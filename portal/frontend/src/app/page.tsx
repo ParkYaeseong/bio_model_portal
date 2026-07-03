@@ -23,7 +23,6 @@ import { JobStatusBadge } from "@/components/JobStatusBadge";
 import { NglViewer } from "@/components/NglViewer";
 import { PhastestViewer, CgviewData } from "@/components/PhastestViewer";
 import { AssistantWidget } from "@/components/AssistantWidget";
-import Link from "next/link";
 
 type UploadEntry = {
   file: File;
@@ -514,12 +513,6 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
             <h1 className="text-2xl font-semibold text-slate-900">K-BioFoundry Orchestrator</h1>
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              href="/workflows"
-              className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
-            >
-              워크플로우
-            </Link>
             <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
               로그아웃
             </button>
