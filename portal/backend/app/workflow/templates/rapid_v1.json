@@ -1,0 +1,23 @@
+{
+  "template_key": "rapid_v1",
+  "name": "RAPID Protein Design",
+  "description": "FASTA/PDB → MSA → Conservation → ProteinMPNN → SoluProt → Validation → Report",
+  "nodes": [
+    {"id": "input", "step_name": "FASTA/PDB Input", "worker": "portal.input", "params": {}},
+    {"id": "msa", "step_name": "MSA Search", "worker": "gateway.mmseqs", "params": {"max_seqs": ""}},
+    {"id": "conservation", "step_name": "Conservation Mask", "worker": "portal.conservation", "params": {"tiers": [30, 50, 70]}},
+    {"id": "mpnn", "step_name": "ProteinMPNN Design", "worker": "gateway.proteinmpnn", "params": {"num_seq_per_target": 16, "sampling_temp": 0.1, "seed": 0, "batch_size": 1}},
+    {"id": "soluprot", "step_name": "SoluProt Filter", "worker": "portal.soluprot_mock", "params": {"top_k": 20}},
+    {"id": "validate", "step_name": "Structure Validation", "worker": "gateway.esmfold", "params": {"plddt_cutoff": 85, "rmsd_cutoff": 2.0}},
+    {"id": "report", "step_name": "Report Export", "worker": "portal.report", "params": {}}
+  ],
+  "edges": [
+    {"from": "input", "to": "msa", "map": {"sequence": "sequence"}},
+    {"from": "msa", "to": "conservation", "map": {"msa": "msa"}},
+    {"from": "input", "to": "mpnn", "map": {"pdb": "backbone"}},
+    {"from": "conservation", "to": "mpnn", "map": {"mask": "fixed_positions"}},
+    {"from": "mpnn", "to": "soluprot", "map": {"fasta": "candidates"}},
+    {"from": "soluprot", "to": "validate", "map": {"top_candidates": "sequences"}},
+    {"from": "validate", "to": "report", "map": {"structures": "structures", "metrics": "metrics"}}
+  ]
+}
