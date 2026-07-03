@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from . import conservation, job_bridge, soluprot_mock, template_loader
-from ..storage import results_dir
 
 TERMINAL_OK = {"completed", "succeeded"}
 TERMINAL_FAIL = {"failed", "cancelled", "timed_out", "error"}
