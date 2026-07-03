@@ -188,3 +188,39 @@ MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
 - **실행 취소**는 런을 `cancelled`로 표시하지만 이미 제출된 원격 GPU Job까지
   취소하지는 않습니다.
 - **SoluProt**는 결정론적 mock 스코어러입니다(실제 워커 연동 시 교체).
+
+## AI 연결 (MCP) — 외부 AI로 포탈 모델 실행
+
+외부 AI 클라이언트(Claude / Codex / Gemini의 MCP 클라이언트)가 포탈의 모델을
+**실행·상태확인·결과조회**할 수 있게 하는 MCP(JSON-RPC over HTTP) 엔드포인트입니다.
+설명은 AI가 결과 데이터로 직접 하고, 포탈 툴은 데이터만 제공합니다.
+
+### 연결 방법
+1. 포탈 헤더의 **`AI 연결`** → `/mcp` 에서 **토큰 생성**(`kbfpat_...`, 생성 시 1회만 표시).
+2. AI 클라이언트의 MCP 설정에 아래를 붙여넣고 `<YOUR_TOKEN>`을 교체:
+```json
+{ "mcpServers": { "bio-model-portal": {
+    "url": "https://biomodel.k-biofoundrycopilot.duckdns.org/mcp",
+    "headers": { "Authorization": "Bearer <YOUR_TOKEN>" } } } }
+```
+
+### 노출 툴
+- `list_models()` — 포탈 파이프라인 + 각 모델 입력 스키마(자기문서화)
+- `run_model(pipeline, parameters?, sequence?, files?)` — 모델 실행(기존 게이트웨이/Job 재사용), `job_id` 반환
+- `job_status(job_id)` / `job_result(job_id)` / `cancel_job(job_id)` — 모두 사용자 소유권 강제
+
+### 보안
+- PAT는 SHA-256 **해시만 저장**(원문 미저장), 생성 시 1회 노출, 해지 가능.
+- 모든 job 접근은 토큰 소유자로 제한.
+- 실 OAuth는 다음 라운드로 연기(현재 PAT 방식).
+
+### 배포 — Caddy `/mcp` 우회 (인프라 호스트)
+`/mcp`는 SSO 쿠키가 아니라 **Bearer PAT**로 접근하므로, biomodel 사이트의
+`forward_auth` **앞에** 아래 블록을 넣어 `/mcp`만 우회시켜야 합니다
+(`/api/mcp/tokens*`는 SSO 게이트 유지):
+```
+@mcp path /mcp
+handle @mcp {
+    reverse_proxy 127.0.0.1:18121   # bmp-backend
+}
+```
