@@ -106,3 +106,73 @@ sudo loginctl enable-linger <user>
 
 포털 앱 코드는 [ParkYaeseong/runpod-portal](https://github.com/ParkYaeseong/runpod-portal) 을
 기반으로 로컬 게이트웨이 연동을 위해 확장했습니다.
+
+## RAPID Workflow (SP1)
+
+포털에서 **RAPID 단백질 설계 워크플로우**를 인스턴스화·실행하고 단계별 진행을
+추적할 수 있습니다. UI 메뉴: 상단 헤더의 `워크플로우` → `/workflows`.
+
+RAPID 흐름:
+
+```
+FASTA/PDB Input → MSA Search → Conservation Mask → ProteinMPNN Design
+  → SoluProt Filter → Structure Validation → Report Export
+```
+
+### 아키텍처 (포털 오케스트레이션)
+
+- 워크플로우 실행은 **포털 백엔드가 오케스트레이션**합니다. Langflow는 이 MVP에
+  배치하지 않으며(Phase 2 예정), RAPID DAG는 버전관리 JSON 템플릿
+  (`app/workflow/templates/rapid_v1.json`)으로 정의됩니다.
+- 각 GPU 단계는 **기존 포털 Job으로 실행**됩니다: `WorkflowRunStep`이 일반
+  파이프라인 Job(예: `proteinmpnn`)을 만들어 게이트웨이에 제출하고, 기존
+  `JobMonitor`가 폴링·아티팩트 저장을 담당합니다. 새 워커 URL/스택은 없습니다.
+- 신규 데몬 **`WorkflowMonitor`**(`JobMonitor`와 동일 패턴, `main.py`에서 기동)가
+  running 워크플로우의 현재 단계 Job 상태를 보고 산출물을 다음 단계 입력으로
+  매핑하며 DAG를 전진시킵니다. 단계 실패 시 해당 단계·런을 `failed`로 표시하고
+  이후 단계는 `skipped` 처리합니다.
+
+### 단계 → 워커 매핑
+
+| 단계 | 워커 | MVP |
+|---|---|---|
+| FASTA/PDB Input | 포털(무워커) | 실제 |
+| MSA Search | 게이트웨이 `mmseqs` | 실제 |
+| Conservation Mask (tier 30/50/70) | 포털 계산(MSA→열별 보존도) | 실제 |
+| ProteinMPNN Design | 게이트웨이 `proteinmpnn` | 실제 |
+| SoluProt Filter (top_k) | **워커 없음** | **mock 스코어러**(`app/workflow/soluprot_mock.py`) |
+| Structure Validation | 게이트웨이 `esmfold` → pLDDT | 실제 |
+| Report Export | 포털 | 실제 |
+
+기본값: ProteinMPNN `num_seq_per_target=16, sampling_temp=0.1, seed=0, batch_size=1`;
+Validation `pLDDT>=85, RMSD<=2.0, top_k=20`; Conservation tiers `30,50,70`.
+SoluProt는 아직 게이트웨이 워커가 없어 결정론적 mock으로 대체하며, 실제
+SoluProt 클라이언트가 나오면 동일 인터페이스로 교체합니다.
+
+### 실행 방법 (UI)
+
+1. `워크플로우` → `+ RAPID 워크플로우 만들기`.
+2. 단계 파라미터(폼 기본값 프리필) 확인, 서열 입력 및 **PDB backbone 업로드**
+   (ProteinMPNN 설계에 필요).
+3. `워크플로우 실행` → 실행 상세 페이지에서 단계별 상태/메트릭(pLDDT·SoluProt score)
+   과 완료 시 후보 sequence 리포트를 확인.
+
+### API
+
+`/api/workflows` (SSO 게이트 뒤): `POST`(인스턴스화), `GET`(목록),
+`GET /{id}`, `POST /upload`(PDB), `POST /{id}/runs`(실행),
+`GET /runs/{run_id}`(상태·단계), `GET /runs/{run_id}/report`, `POST /runs/{run_id}/cancel`.
+
+### 설정 / 테스트
+
+- 새 시크릿 없음. 워커는 기존 게이트웨이(`gateway/endpoints.yaml`) 경유. `LANGFLOW_URL`은
+  Phase 2용으로 예약(공란).
+- 백엔드 테스트: `cd portal/backend && .venv/bin/python -m pytest tests/ -q`
+  (`conftest.py`가 임시 DB로 격리). 전-스텝 mock E2E는
+  `tests/test_workflow_e2e_mock.py`.
+
+### Phase 2 / 로드맵
+
+Langflow 임베디드 빌더(동일 DAG 스키마 import/export), 포털 MCP 서버(SP2),
+멀티공급자 실행 챗봇(SP3), 실행/대화 로그 기반 human-in-the-loop 자가개선(SP4).
+MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
