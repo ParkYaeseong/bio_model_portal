@@ -73,7 +73,11 @@ def run_chat(
         results: list[dict] = []
         for call in parsed.tool_calls:
             args = call["arguments"]
-            if call["name"] == "run_model" and attachments and not args.get("files"):
+            if call["name"] == "run_model" and attachments:
+                # Always override with the real uploaded files. The LLM can't
+                # supply base64 it never saw, but it often hallucinates a
+                # name-only ``files`` arg (e.g. [{"name": "x.pdb"}]) to match the
+                # schema; that must not suppress the actual upload injection.
                 args = {**args, "files": attachments}
             result = _execute_tool(db, user, call["name"], args)
             # Record the LLM's own arguments (not the injected base64) so the

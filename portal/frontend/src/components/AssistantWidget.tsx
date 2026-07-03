@@ -245,7 +245,10 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
       ];
       setMessages(finalMessages);
       upsertConversation(convId, finalMessages);
-      setAttachments([]); // consumed by this turn
+      // Keep attachments across turns: the user may attach a file, discuss it,
+      // then ask to run it a turn or two later. They persist until the user
+      // removes them (✕) or starts a new chat. (Cleared on error is avoided so
+      // a transient failure doesn't lose the upload.)
     } catch (err: any) {
       setError(err.message || "응답을 받지 못했습니다.");
     } finally {
@@ -380,18 +383,26 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             </div>
 
             {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {attachments.map((a, i) => (
-                  <span
-                    key={i}
-                    className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600"
-                  >
-                    📎 {a.name} ({(a.size / 1024).toFixed(0)}KB)
-                    <button className="text-slate-400 hover:text-rose-500" onClick={() => removeAttachment(i)}>
-                      ✕
-                    </button>
-                  </span>
-                ))}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>첨부 {attachments.length}개 · 제거(✕) 전까지 유지되어 실행에 사용됩니다</span>
+                  <button className="text-slate-400 hover:text-rose-500" onClick={() => setAttachments([])}>
+                    모두 지우기
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {attachments.map((a, i) => (
+                    <span
+                      key={i}
+                      className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600"
+                    >
+                      📎 {a.name} ({(a.size / 1024).toFixed(0)}KB)
+                      <button className="text-slate-400 hover:text-rose-500" onClick={() => removeAttachment(i)}>
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 

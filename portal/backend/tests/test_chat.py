@@ -152,7 +152,14 @@ def test_run_chat_injects_attachments_into_run_model(monkeypatch):
     class RunProvider(FakeProvider):
         def parse(self, resp):
             if resp["round"] == 1:
-                return ParsedTurn("", [{"id": "t1", "name": "run_model", "arguments": {"pipeline": "esmfold"}}], "tool_use")
+                # LLM hallucinates a name-only files arg — the real upload must
+                # still be injected (override), not suppressed.
+                return ParsedTurn(
+                    "",
+                    [{"id": "t1", "name": "run_model",
+                      "arguments": {"pipeline": "esmfold", "files": [{"name": "seq.fasta"}]}}],
+                    "tool_use",
+                )
             return ParsedTurn("submitted", [], "end_turn")
 
     with SessionLocal() as db:
@@ -164,10 +171,13 @@ def test_run_chat_injects_attachments_into_run_model(monkeypatch):
             attachments=attachments,
         )
         assert out["tool_calls"][0]["result"]["ok"] is True
-        # The attached file reached run_model → create_step_job as an input file.
+        # The real upload reached run_model → create_step_job as an input file,
+        # even though the LLM passed a name-only files arg.
         assert len(captured["input_files"]) == 1
-        # The recorded tool arguments do NOT contain the base64 payload.
-        assert "files" not in out["tool_calls"][0]["arguments"]
+        # The recorded tool arguments never carry the base64 payload (only the
+        # LLM's own name-only entry is echoed back).
+        recorded = out["tool_calls"][0]["arguments"]
+        assert all("base64" not in f for f in recorded.get("files", []))
 
 
 def test_run_chat_hits_iteration_cap():
