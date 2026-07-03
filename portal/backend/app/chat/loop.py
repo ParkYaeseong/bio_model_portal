@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..mcp.tools import TOOLS
+from ..selfimprove import feedback as si_feedback
 from .providers import Provider, ProviderError  # noqa: F401  (re-exported for callers)
 
 SYSTEM_PROMPT = (
@@ -58,11 +59,12 @@ def run_chat(
     attachments = attachments or []
     tools = provider.format_tools(TOOLS)
     messages = provider.build_messages(history)
+    system_prompt = SYSTEM_PROMPT + si_feedback.render_prompt_block(si_feedback.active_artifact(db))
     collected: list[dict] = []
     last_text = ""
 
     for _ in range(max_iters):
-        resp = provider.request(api_key, model, SYSTEM_PROMPT, messages, tools)
+        resp = provider.request(api_key, model, system_prompt, messages, tools)
         parsed = provider.parse(resp)
         if parsed.text:
             last_text = parsed.text
