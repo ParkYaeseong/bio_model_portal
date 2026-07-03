@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from .. import models
-from . import conservation, soluprot_mock, template_loader
+from . import conservation, job_bridge, soluprot_mock, template_loader
+from ..storage import results_dir
 
 TERMINAL_OK = {"completed", "succeeded"}
 TERMINAL_FAIL = {"failed", "cancelled", "timed_out", "error"}
@@ -135,14 +137,89 @@ def _run_portal_step(db, run, step, node) -> tuple[dict, dict]:
     raise ValueError(f"unknown portal worker: {worker}")
 
 
+# gateway.<pipeline> -> pipeline key
+_WORKER_PIPELINE = {
+    "gateway.mmseqs": "mmseqs",
+    "gateway.proteinmpnn": "proteinmpnn",
+    "gateway.esmfold": "esmfold",
+}
+
+
 def _submit_worker_step(db, run, step, node) -> None:
-    """Placeholder wired in Task 7; raises until implemented."""
-    raise NotImplementedError("worker step submission wired in Task 7")
+    pipeline = _WORKER_PIPELINE[node["worker"]]
+    ctx = run.input_summary or {}
+    sequence = None
+    input_files: list[Path] = []
+    if pipeline == "mmseqs":
+        sequence = ctx.get("sequence")
+    elif pipeline == "proteinmpnn":
+        pdb_path = ctx.get("backbone_path")
+        if not pdb_path:
+            _fail(db, run, step, "ProteinMPNN needs a PDB backbone (upload a structure).")
+            return
+        input_files = [Path(pdb_path)]
+    elif pipeline == "esmfold":
+        top = ctx.get("top_candidates", [])
+        sequence = top[0]["sequence"] if top else ctx.get("sequence")
+    job = job_bridge.create_step_job(
+        db, user_id=run.owner_id, title=f"{run.id[:8]} {step.step_name}",
+        pipeline=pipeline, params=step.parameters or {},
+        input_files=input_files, sequence=sequence,
+    )
+    step.job_id = job.id
+    db.commit()
 
 
 def _collect_worker_output(job) -> tuple[dict, dict]:
-    """Placeholder wired in Task 7."""
-    return {}, {}
+    """Read a completed step-Job's artifacts into the run context + metrics."""
+    result: dict = {}
+    metrics: dict = {}
+    rdir = Path(job.result_dir) if job.result_dir else None
+    if job.pipeline == "proteinmpnn" and rdir:
+        fasta = next(iter(rdir.rglob("*.fa")), None) or next(iter(rdir.rglob("*.fasta")), None)
+        if fasta:
+            result["candidates"] = _parse_fasta_candidates(fasta.read_text())
+            metrics["designs"] = len(result["candidates"])
+    elif job.pipeline == "mmseqs" and rdir:
+        a3m = next(iter(rdir.rglob("*.a3m")), None)
+        if a3m:
+            result["msa"] = _parse_a3m(a3m.read_text())
+            metrics["n_seqs"] = len(result["msa"])
+    elif job.pipeline == "esmfold" and rdir:
+        pdb = next(iter(rdir.rglob("*ranked_0*.pdb")), None) or next(iter(rdir.rglob("*.pdb")), None)
+        if pdb:
+            result["structures"] = [str(pdb)]
+            metrics["plddt"] = _mean_plddt(pdb.read_text())
+    return result, metrics
+
+
+def _parse_fasta_candidates(text: str) -> list[dict]:
+    out, cur_id, cur = [], None, []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            if cur_id is not None:
+                out.append({"id": cur_id, "sequence": "".join(cur)})
+            cur_id, cur = line[1:].strip() or f"seq_{len(out)+1}", []
+        elif line.strip():
+            cur.append(line.strip())
+    if cur_id is not None:
+        out.append({"id": cur_id, "sequence": "".join(cur)})
+    return out
+
+
+def _parse_a3m(text: str) -> list[str]:
+    return [ln.strip() for ln in text.splitlines() if ln and not ln.startswith(">")]
+
+
+def _mean_plddt(pdb_text: str) -> float | None:
+    vals = []
+    for ln in pdb_text.splitlines():
+        if ln.startswith("ATOM") and len(ln) >= 66 and ln[12:16].strip() == "CA":
+            try:
+                vals.append(float(ln[60:66]))
+            except ValueError:
+                pass
+    return round(sum(vals) / len(vals), 2) if vals else None
 
 
 def _build_output_summary(db, run) -> dict:
