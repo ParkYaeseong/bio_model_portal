@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,9 +23,11 @@ def create_step_job(
 ) -> models.Job:
     """Create + submit a portal Job for a workflow step, reusing the gateway
     path so the existing JobMonitor drives it to completion."""
+    params = {k: v for k, v in (params or {}).items() if not (isinstance(v, str) and v.strip() == "")}
     job = models.Job(
         id=str(uuid4()), user_id=user_id, title=title, pipeline=pipeline,
-        status="pending", parameters=params or {},
+        status="pending", parameters=params,
+        expires_at=datetime.utcnow() + timedelta(days=365),
     )
     db.add(job)
     db.commit()

@@ -71,7 +71,10 @@ def upload_input(file: UploadFile = File(...), user: models.User = Depends(get_c
     raw_name = PurePosixPath(file.filename or "input").name
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", raw_name) or "input"
     dest = dest_dir / safe_name
-    dest.write_bytes(file.file.read())
+    data = file.file.read()
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large.")
+    dest.write_bytes(data)
     return {"backbone_path": str(dest), "file_name": dest.name}
 
 
@@ -109,7 +112,8 @@ def start_run(workflow_id: str, payload: RunRequest, db: Session = Depends(get_d
     backbone_path = _validate_owned_upload(payload.backbone_path, user.id)
     run = models.WorkflowRun(
         workflow_id=wf.id, owner_id=user.id, status="queued",
-        input_summary={"sequence": payload.sequence, "backbone_path": backbone_path},
+        input_summary={"sequence": payload.sequence, "backbone_path": backbone_path,
+                       "__step_overrides__": payload.step_params or {}},
     )
     db.add(run); db.commit(); db.refresh(run)
     orchestrator.start_run(db, run)

@@ -6,10 +6,10 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..tasks import ACTIVE_JOB_STATUSES
 from . import conservation, job_bridge, soluprot_mock, template_loader
 
 TERMINAL_OK = {"completed", "succeeded"}
-TERMINAL_FAIL = {"failed", "cancelled", "timed_out", "error"}
 
 
 def _nodes(run: models.WorkflowRun) -> list[dict]:
@@ -34,9 +34,11 @@ def start_run(db: Session, run: models.WorkflowRun) -> None:
 
 def _spawn_step(db: Session, run: models.WorkflowRun, order: int) -> models.WorkflowRunStep:
     node = _nodes(run)[order]
+    overrides = (run.input_summary or {}).get("__step_overrides__", {}) or {}
+    params = {**(node.get("params") or {}), **(overrides.get(node["id"], {}) or {})}
     step = models.WorkflowRunStep(
         run_id=run.id, order=order, step_name=node["step_name"],
-        worker_name=node["worker"], status="running", parameters=node.get("params", {}),
+        worker_name=node["worker"], status="running", parameters=params,
     )
     db.add(step)
     db.commit()
@@ -69,15 +71,30 @@ def advance(db: Session, run: models.WorkflowRun) -> None:
     if _is_worker_step(node):
         job = db.query(models.Job).filter_by(id=step.job_id).first() if step.job_id else None
         if job is None:
-            _submit_worker_step(db, run, step, node)
+            try:
+                _submit_worker_step(db, run, step, node)
+            except Exception as exc:  # noqa: BLE001
+                _fail(db, run, step, f"submit failed: {exc}")
             return
         jstatus = (job.status or "").lower()
-        if jstatus in TERMINAL_FAIL:
-            _fail(db, run, step, job.error_message or "worker step failed")
-            return
-        if jstatus not in TERMINAL_OK:
+        if jstatus in TERMINAL_OK:
+            pass  # fall through to collect below
+        elif jstatus in ACTIVE_JOB_STATUSES:
+            return  # still running; monitor re-checks
+        else:
+            _fail(db, run, step, job.error_message or f"worker ended with status '{jstatus}'")
             return
         result, metrics = _collect_worker_output(job)
+        expected = _EXPECTED_OUTPUT.get(job.pipeline)
+        if expected and not result.get(expected):
+            _fail(db, run, step, f"{job.pipeline} produced no {expected} (unexpected worker output layout)")
+            return
+        if job.pipeline == "esmfold" and metrics.get("plddt") is not None:
+            summary = run.input_summary or {}
+            cands = summary.get("top_candidates")
+            if cands:
+                cands[0]["plddt"] = metrics["plddt"]
+                run.input_summary = {**summary, "top_candidates": cands}
     else:
         try:
             result, metrics = _run_portal_step(db, run, step, node)
@@ -142,6 +159,9 @@ _WORKER_PIPELINE = {
     "gateway.proteinmpnn": "proteinmpnn",
     "gateway.esmfold": "esmfold",
 }
+
+# pipeline -> result key that a successful worker step must produce
+_EXPECTED_OUTPUT = {"mmseqs": "msa", "proteinmpnn": "candidates", "esmfold": "structures"}
 
 
 def _submit_worker_step(db, run, step, node) -> None:

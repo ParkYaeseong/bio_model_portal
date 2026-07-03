@@ -11,8 +11,8 @@ from app.database import SessionLocal
 from app.workflow import monitor, orchestrator
 
 _PDB = (
-    "ATOM      1  CA  ALA A   1       0.0   0.0   0.0  1.00 80.00           C\n"
-    "ATOM      2  CA  GLY A   2       0.0   0.0   0.0  1.00 90.00           C\n"
+    "ATOM      1 CA   ALA A   1       0.000   0.000   0.000  1.00 80.00           C\n"
+    "ATOM      2 CA   GLY A   2       0.000   0.000   0.000  1.00 90.00           C\n"
 )
 
 
@@ -70,3 +70,5 @@ def test_rapid_run_reaches_completed_with_candidates(monkeypatch, tmp_path):
         candidates = (run.output_summary or {}).get("candidates", [])
         assert candidates, "no candidates in output_summary"
         assert "soluprot_score" in candidates[0]
+        assert "plddt" in candidates[0], "esmfold pLDDT not surfaced on candidate"
+        assert candidates[0]["plddt"] == 85.0

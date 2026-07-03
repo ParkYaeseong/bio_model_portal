@@ -70,9 +70,12 @@ export default function NewWorkflowPage() {
 
       const workflow = await instantiateWorkflow(token, { template_key: "rapid_v1", name });
 
+      // Keyed by rapid_v1 node id so the orchestrator can match overrides per node.
+      // Only the ProteinMPNN (`mpnn`) params are worker-affecting in the MVP;
+      // `validate`/`conservation` are sent for display parity with the template.
       const step_params = {
-        proteinmpnn: proteinMpnn,
-        validation,
+        mpnn: proteinMpnn,
+        validate: validation,
         conservation: { tiers: conservationTiers },
       };
 
