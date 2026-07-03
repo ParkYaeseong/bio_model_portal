@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
 
+    # --- Self-improvement (SP4) ---
+    selfimprove_enabled: bool = Field(default=True, env="SELFIMPROVE_ENABLED")
+    selfimprove_interval_s: int = Field(default=86400, env="SELFIMPROVE_INTERVAL_S")
+    selfimprove_autoactivate: bool = Field(default=False, env="SELFIMPROVE_AUTOACTIVATE")
+    # Comma-separated User.username values (e.g. "sso:<sub>,kbfportal") allowed to
+    # activate/reject artifacts. Empty => nobody can promote (fail closed).
+    selfimprove_admin_users: str = Field(default="", env="SELFIMPROVE_ADMIN_USERS")
+
     storage_root: Path = Field(default=Path("./data"), env="STORAGE_ROOT")
     uploads_dir: str = "uploads"
     results_dir: str = "results"
