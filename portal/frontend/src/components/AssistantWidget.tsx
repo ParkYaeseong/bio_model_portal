@@ -92,6 +92,8 @@ const fileToBase64 = (file: File): Promise<string> =>
 
 export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const [isOpen, setIsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const threadRef = useRef<HTMLDivElement>(null);
 
   const [provider, setProvider] = useState<ChatProvider>("anthropic");
   const [apiKey, setApiKey] = useState("");
@@ -128,6 +130,12 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   useEffect(() => {
     if (initialJobId) setContextJobId(initialJobId);
   }, [initialJobId]);
+
+  // Keep the newest message in view as the conversation grows / while loading.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, loading]);
 
   const handleKeyChange = (value: string) => {
     setApiKey(value);
@@ -264,15 +272,28 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   return (
     <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
       {isOpen && (
-        <div className="w-[380px] max-w-[92vw] rounded-3xl border border-slate-200 bg-white shadow-2xl">
+        <div
+          className={`${
+            expanded ? "w-[760px]" : "w-[380px]"
+          } max-w-[94vw] rounded-3xl border border-slate-200 bg-white shadow-2xl`}
+        >
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">AI 도우미</p>
               <p className="text-xs text-slate-500">내 API 키로 모델을 실행하고 결과를 해석받으세요.</p>
             </div>
-            <button className="text-slate-400" onClick={() => setIsOpen(false)}>
-              ✕
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="text-slate-400 hover:text-slate-600"
+                title={expanded ? "작게" : "크게"}
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded ? "🗕" : "🗖"}
+              </button>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setIsOpen(false)}>
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Conversation controls */}
@@ -346,7 +367,12 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
               </div>
             )}
 
-            <div className="max-h-72 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 p-3 text-xs">
+            <div
+              ref={threadRef}
+              className={`${
+                expanded ? "h-[62vh]" : "h-72"
+              } resize-y overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 p-3 text-xs`}
+            >
               {messages.length === 0 && (
                 <p className="text-slate-400">
                   예: “esmfold로 ACDEFG 접어줘” · “첨부한 파일로 proteinmpnn 돌려줘” · “이 작업 결과 해석해줘”
