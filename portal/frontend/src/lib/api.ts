@@ -209,3 +209,58 @@ export const askAssistant = (payload: AssistantRequest, token: string) =>
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  template_key: string;
+  last_run_status: string | null;
+  created_at: string;
+}
+
+export interface WorkflowRunStep {
+  order: number;
+  step_name: string;
+  worker_name: string;
+  status: string;
+  job_id: string | null;
+  metrics: Record<string, unknown> | null;
+  error_message: string | null;
+  logs: string | null;
+}
+
+export interface WorkflowRunDetail {
+  id: string;
+  status: string;
+  error_message: string | null;
+  input_summary: Record<string, unknown> | null;
+  output_summary: Record<string, unknown> | null;
+  steps: WorkflowRunStep[];
+}
+
+export const listWorkflows = (token: string) =>
+  apiFetch<{ workflows: WorkflowSummary[] }>("/api/workflows", token);
+
+export const instantiateWorkflow = (token: string, body: { template_key: string; name?: string }) =>
+  apiFetch<WorkflowSummary>("/api/workflows", token, { method: "POST", body: JSON.stringify(body) });
+
+export const uploadWorkflowInput = async (token: string, file: File): Promise<{ backbone_path: string; file_name: string }> => {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<{ backbone_path: string; file_name: string }>("/api/workflows/upload", token, { method: "POST", body: form });
+};
+
+export const startWorkflowRun = (
+  token: string,
+  workflowId: string,
+  body: { sequence?: string; backbone_path?: string; step_params?: Record<string, unknown> },
+) => apiFetch<{ id: string; status: string }>(`/api/workflows/${workflowId}/runs`, token, { method: "POST", body: JSON.stringify(body) });
+
+export const getWorkflowRun = (token: string, runId: string) =>
+  apiFetch<WorkflowRunDetail>(`/api/workflows/runs/${runId}`, token);
+
+export const getWorkflowReport = (token: string, runId: string) =>
+  apiFetch<{ run_id: string; status: string; candidates: Array<Record<string, unknown>> }>(
+    `/api/workflows/runs/${runId}/report`, token,
+  );
