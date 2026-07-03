@@ -9,6 +9,7 @@ from ..auth import get_current_user
 from ..chat import loop as chat_loop
 from ..chat.providers import ProviderError, get_provider
 from ..database import get_db
+from ..selfimprove import capture as si_capture
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -77,4 +78,5 @@ def chat(
         result = chat_loop.run_chat(db, current_user, provider, api_key, model, history, attachments=attachments)
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
+    si_capture.record_interaction(db, current_user, payload.provider, result["model"], history, result)
     return ChatResponse(**result)
