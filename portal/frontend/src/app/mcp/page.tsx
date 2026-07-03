@@ -5,14 +5,17 @@ import useSWR from "swr";
 
 import { McpToken, createMcpToken, listMcpTokens, revokeMcpToken } from "@/lib/api";
 
-const MCP_ENDPOINT_URL = "https://biomodel.k-biofoundrycopilot.duckdns.org/mcp";
+const FALLBACK_MCP_URL = "https://biomodel.k-biofoundrycopilot.duckdns.org/mcp";
+
+const mcpEndpointUrl = () =>
+  typeof window !== "undefined" ? `${window.location.origin}/mcp` : FALLBACK_MCP_URL;
 
 const buildConfigSnippet = (rawToken: string) =>
   JSON.stringify(
     {
       mcpServers: {
         "bio-model-portal": {
-          url: MCP_ENDPOINT_URL,
+          url: mcpEndpointUrl(),
           headers: { Authorization: `Bearer ${rawToken || "<YOUR_TOKEN>"}` },
         },
       },
@@ -166,7 +169,7 @@ export default function McpSettingsPage() {
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-semibold text-slate-900">연결 방법</h2>
           <p className="mt-2 text-sm text-slate-500">
-            MCP 엔드포인트: <span className="font-mono text-slate-700">{MCP_ENDPOINT_URL}</span>
+            MCP 엔드포인트: <span className="font-mono text-slate-700">{mcpEndpointUrl()}</span>
           </p>
           <p className="mt-3 text-sm text-slate-500">
             아래 설정을 Claude/Codex/Gemini 등 MCP 클라이언트 설정에 붙여넣고 <span className="font-mono">&lt;YOUR_TOKEN&gt;</span>을 위에서 발급한 토큰으로 교체하세요.

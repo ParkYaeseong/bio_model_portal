@@ -50,3 +50,25 @@ def test_unknown_method_returns_jsonrpc_error():
     raw = _pat()
     r = _rpc(client, raw, "no/such").json()
     assert r["error"]["code"] == -32601
+
+
+def test_non_dict_body_returns_invalid_request():
+    client = TestClient(app)
+    raw = _pat()
+    r = client.post("/mcp", headers={"Authorization": f"Bearer {raw}"}, json=[1, 2, 3])
+    assert r.status_code == 200 and r.json()["error"]["code"] == -32600
+
+
+def test_notification_gets_202_no_body():
+    client = TestClient(app)
+    raw = _pat()
+    r = client.post("/mcp", headers={"Authorization": f"Bearer {raw}"},
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert r.status_code == 202 and r.content == b""
+
+
+def test_initialize_echoes_requested_protocol():
+    client = TestClient(app)
+    raw = _pat()
+    r = _rpc(client, raw, "initialize", {"protocolVersion": "2025-06-18"}).json()
+    assert r["result"]["protocolVersion"] == "2025-06-18"

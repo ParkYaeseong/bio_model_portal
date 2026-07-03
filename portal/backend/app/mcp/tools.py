@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..runpod import PIPELINES
 from ..workflow import job_bridge
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB per file
 
 
 def _field(f) -> dict:
@@ -39,20 +42,30 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
     params = arguments.get("parameters") or {}
     sequence = arguments.get("sequence")
     input_files: list[Path] = []
-    tmp = None
-    for item in arguments.get("files") or []:
-        b64 = item.get("base64")
-        if not b64:
-            continue
-        tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_upload_"))
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(item.get("name") or "input"))
-        dest = tmp / (safe or "input")
-        dest.write_bytes(base64.b64decode(b64))
-        input_files.append(dest)
-    job = job_bridge.create_step_job(
-        db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,
-        params=params, input_files=input_files or None, sequence=sequence,
-    )
+    tmp: Path | None = None
+    try:
+        for item in arguments.get("files") or []:
+            b64 = item.get("base64")
+            if not b64:
+                continue
+            try:
+                data = base64.b64decode(b64)
+            except Exception:
+                return {"ok": False, "error": "a file's base64 content is invalid"}
+            if len(data) > _MAX_UPLOAD_BYTES:
+                return {"ok": False, "error": f"file exceeds {_MAX_UPLOAD_BYTES} bytes"}
+            tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_upload_"))
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(item.get("name") or "input"))
+            dest = tmp / (safe or "input")
+            dest.write_bytes(data)
+            input_files.append(dest)
+        job = job_bridge.create_step_job(
+            db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,
+            params=params, input_files=input_files or None, sequence=sequence,
+        )
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)  # bytes already copied into uploads_dir
     return {"ok": True, "job_id": job.id, "status": job.status, "endpoint_id": job.endpoint_id}
 
 

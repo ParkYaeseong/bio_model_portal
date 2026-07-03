@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from ..database import SessionLocal
@@ -11,6 +11,7 @@ from .tools import TOOLS
 
 router = APIRouter(tags=["mcp"])
 SERVER_INFO = {"name": "bio-model-portal", "version": "1.0"}
+SUPPORTED_PROTOCOL = "2024-11-05"
 
 
 def _err(_id, code, message):
@@ -33,18 +34,23 @@ async def mcp_endpoint(request: Request):
             body = await request.json()
         except Exception:
             return JSONResponse(_err(None, -32700, "parse error"))
+        if not isinstance(body, dict):
+            return JSONResponse(_err(None, -32600, "invalid request (expected a JSON object)"))
         _id = body.get("id")
         method = body.get("method")
-        params = body.get("params") or {}
+        params = body.get("params") if isinstance(body.get("params"), dict) else {}
+
+        # Notifications (no id, or notifications/*) get no response body per JSON-RPC.
+        if method and str(method).startswith("notifications/"):
+            return Response(status_code=202)
 
         if method == "initialize":
+            requested = params.get("protocolVersion")
             return JSONResponse(_ok(_id, {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": requested if isinstance(requested, str) and requested else SUPPORTED_PROTOCOL,
                 "capabilities": {"tools": {}},
                 "serverInfo": SERVER_INFO,
             }))
-        if method == "notifications/initialized":
-            return JSONResponse(_ok(_id, {}))
         if method == "tools/list":
             tools = [
                 {"name": name, "description": desc, "inputSchema": schema}
