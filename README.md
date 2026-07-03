@@ -176,3 +176,15 @@ SoluProt 클라이언트가 나오면 동일 인터페이스로 교체합니다.
 Langflow 임베디드 빌더(동일 DAG 스키마 import/export), 포털 MCP 서버(SP2),
 멀티공급자 실행 챗봇(SP3), 실행/대화 로그 기반 human-in-the-loop 자가개선(SP4).
 MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
+
+### 알려진 한계 (MVP)
+
+- **Conservation 마스크는 계산·표시되지만 ProteinMPNN 설계에 아직 강제되지 않습니다.**
+  현재 `proteinmpnn` 게이트웨이 워커가 fixed-positions 입력을 노출하지 않기 때문이며,
+  워커가 해당 파라미터를 지원하면 `_submit_worker_step`에서 마스크를 전달하도록
+  확장합니다.
+- **Structure Validation은 top 후보 1개만 폴딩**해 pLDDT를 리포트에 표시합니다
+  (전체 top_k 폴딩은 비용 문제로 후속 과제).
+- **실행 취소**는 런을 `cancelled`로 표시하지만 이미 제출된 원격 GPU Job까지
+  취소하지는 않습니다.
+- **SoluProt**는 결정론적 mock 스코어러입니다(실제 워커 연동 시 교체).
