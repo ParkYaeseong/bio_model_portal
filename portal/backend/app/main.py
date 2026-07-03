@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .database import Base, engine
-from .routers import assistant, auth, jobs, pipelines, rfdiffusion, users
+from .routers import assistant, auth, jobs, pipelines, rfdiffusion, users, workflows
 from .tasks import monitor
 from .workflow.monitor import workflow_monitor
 
@@ -29,6 +29,7 @@ app.include_router(pipelines.router)
 app.include_router(jobs.router)
 app.include_router(assistant.router)
 app.include_router(rfdiffusion.router)
+app.include_router(workflows.router)
 
 
 @app.on_event("startup")
