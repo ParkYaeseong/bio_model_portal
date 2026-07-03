@@ -106,7 +106,9 @@ class AnthropicProvider(Provider):
         except httpx.HTTPStatusError as exc:
             raise ProviderError(_http_detail(exc)) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(str(exc)) from exc
+            # Use the exception class name only — str(exc) can embed the request
+            # URL/headers, which we never want echoed back to the caller.
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
         return resp.json()
 
     def parse(self, resp: dict) -> ParsedTurn:
@@ -162,7 +164,9 @@ class OpenAIProvider(Provider):
         except httpx.HTTPStatusError as exc:
             raise ProviderError(_http_detail(exc)) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(str(exc)) from exc
+            # Use the exception class name only — str(exc) can embed the request
+            # URL/headers, which we never want echoed back to the caller.
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
         return resp.json()
 
     def parse(self, resp: dict) -> ParsedTurn:
@@ -229,7 +233,9 @@ class GeminiProvider(Provider):
         except httpx.HTTPStatusError as exc:
             raise ProviderError(_http_detail(exc)) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(str(exc)) from exc
+            # Use the exception class name only — str(exc) can embed the request
+            # URL/headers, which we never want echoed back to the caller.
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
         return resp.json()
 
     def parse(self, resp: dict) -> ParsedTurn:
