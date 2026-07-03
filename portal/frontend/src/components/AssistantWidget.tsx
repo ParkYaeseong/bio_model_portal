@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { chatWithModels, ChatProvider, ChatToolCall, JobResponse } from "@/lib/api";
 
 type Props = {
@@ -32,6 +34,23 @@ function toolChip(call: ChatToolCall): string {
   const jobId = (call.result?.job_id as string | undefined) ?? undefined;
   const detail = jobId ? ` · ${jobId.slice(0, 8)}…` : "";
   return `🔧 ${call.name}${detail} ${ok ? "✓" : "✕"}`;
+}
+
+// Render assistant markdown compactly inside the narrow chat panel: GFM tables,
+// lists, code, and links, scoped so it doesn't inherit the app's prose styles.
+function MarkdownMessage({ text }: { text: string }) {
+  return (
+    <div className="markdown-chat space-y-2 text-slate-600 [&_a]:text-brand-600 [&_a]:underline [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[10px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_ol_li]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-slate-900 [&_pre]:p-2 [&_pre]:text-slate-100 [&_pre_code]:bg-transparent [&_pre_code]:text-slate-100 [&_strong]:font-semibold [&_table]:my-1 [&_table]:block [&_table]:overflow-x-auto [&_td]:border [&_td]:border-slate-200 [&_td]:px-1.5 [&_td]:py-0.5 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-1.5 [&_th]:py-0.5">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -229,7 +248,11 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
                       ))}
                     </div>
                   )}
-                  <p className="whitespace-pre-wrap text-slate-600">{message.content}</p>
+                  {message.role === "assistant" ? (
+                    <MarkdownMessage text={message.content} />
+                  ) : (
+                    <p className="whitespace-pre-wrap text-slate-600">{message.content}</p>
+                  )}
                 </div>
               ))}
             </div>
