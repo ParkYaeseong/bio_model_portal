@@ -68,3 +68,18 @@ def test_upload_sanitizes_traversal_filename_and_run_rejects_foreign_path(tmp_pa
     assert r.status_code == 200, r.text
 
     app.dependency_overrides.clear()
+
+
+def test_cancel_run_marks_running_step_cancelled():
+    user = _make_user()
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+    wf = client.post("/api/workflows", json={"template_key": "rapid_v1"}).json()
+    run = client.post(f"/api/workflows/{wf['id']}/runs", json={"sequence": "ACDEFG"}).json()
+    r = client.post(f"/api/workflows/runs/{run['id']}/cancel")
+    assert r.status_code == 200 and r.json()["status"] == "cancelled"
+    detail = client.get(f"/api/workflows/runs/{run['id']}").json()
+    assert detail["status"] == "cancelled"
+    # the step that was running at cancel time is now cancelled (not left running)
+    assert not any(s["status"] == "running" for s in detail["steps"])
+    app.dependency_overrides.clear()

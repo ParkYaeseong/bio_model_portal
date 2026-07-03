@@ -1,12 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 
-import { getWorkflowRun, getWorkflowReport, WorkflowRunStep } from "@/lib/api";
+import { getWorkflowRun, getWorkflowReport, cancelWorkflowRun, WorkflowRunStep } from "@/lib/api";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const CANCELLABLE_STATUSES = new Set(["running", "queued"]);
 
 function formatMetrics(metrics: Record<string, unknown> | null): string {
   if (!metrics) return "";
@@ -25,7 +27,9 @@ export default function WorkflowRunPage() {
   const params = useParams();
   const runId = Array.isArray(params.runId) ? params.runId[0] : params.runId;
 
-  const { data, error } = useSWR(
+  const [cancelling, setCancelling] = useState(false);
+
+  const { data, error, mutate } = useSWR(
     runId ? ["workflow-run", runId] : null,
     () => getWorkflowRun(token, runId as string),
     {
@@ -33,6 +37,17 @@ export default function WorkflowRunPage() {
         latestData && TERMINAL_STATUSES.has(latestData.status) ? 0 : 5000,
     }
   );
+
+  const handleCancel = async () => {
+    if (!runId) return;
+    setCancelling(true);
+    try {
+      await cancelWorkflowRun(token, runId as string);
+      await mutate();
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const { data: report } = useSWR(
     data && data.status === "completed" && runId ? ["workflow-report", runId] : null,
@@ -47,7 +62,19 @@ export default function WorkflowRunPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-6">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-semibold text-slate-900">워크플로우 실행 결과</h1>
-            {data && <JobStatusBadge status={data.status} />}
+            <div className="flex items-center gap-3">
+              {data && <JobStatusBadge status={data.status} />}
+              {data && CANCELLABLE_STATUSES.has(data.status) && (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:border-rose-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {cancelling ? "정지 중..." : "정지"}
+                </button>
+              )}
+            </div>
           </div>
           {error && (
             <p className="mt-3 text-sm text-rose-600">실행 정보를 불러오지 못했습니다.</p>

@@ -60,6 +60,15 @@ export default function NewWorkflowPage() {
 
   const handleSubmit = async () => {
     setError(null);
+    // RAPID needs a sequence (MSA step) and a PDB backbone (ProteinMPNN step).
+    if (!sequence.trim()) {
+      setError("MSA 검색을 위해 아미노산 서열을 입력하세요.");
+      return;
+    }
+    if (!file) {
+      setError("ProteinMPNN 설계를 위해 PDB backbone 파일을 업로드하세요.");
+      return;
+    }
     setSubmitting(true);
     try {
       let backbonePath: string | undefined;
@@ -192,7 +201,7 @@ export default function NewWorkflowPage() {
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-          <label className="text-sm font-semibold text-slate-600">서열 (선택)</label>
+          <label className="text-sm font-semibold text-slate-600">서열 (필수 · MSA 검색용)</label>
           <textarea
             className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-sm"
             rows={4}
@@ -201,7 +210,7 @@ export default function NewWorkflowPage() {
             placeholder={">sp|P12345 예시\nMVTES..."}
           />
 
-          <label className="mt-4 block text-sm font-semibold text-slate-600">PDB backbone 업로드 (선택)</label>
+          <label className="mt-4 block text-sm font-semibold text-slate-600">PDB backbone 업로드 (필수 · ProteinMPNN 설계용)</label>
           <input
             type="file"
             accept=".pdb,.cif"

@@ -264,3 +264,6 @@ export const getWorkflowReport = (token: string, runId: string) =>
   apiFetch<{ run_id: string; status: string; candidates: Array<Record<string, unknown>> }>(
     `/api/workflows/runs/${runId}/report`, token,
   );
+
+export const cancelWorkflowRun = (token: string, runId: string) =>
+  apiFetch<{ id: string; status: string }>(`/api/workflows/runs/${runId}/cancel`, token, { method: "POST" });

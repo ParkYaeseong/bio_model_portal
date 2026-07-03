@@ -153,5 +153,14 @@ def cancel_run(run_id: str, db: Session = Depends(get_db), user: models.User = D
     if run.status in {"running", "queued"}:
         run.status = "cancelled"
         run.finished_at = datetime.utcnow()
+        _active = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
+        for step in run.steps:
+            if step.status == "running":
+                step.status = "cancelled"
+                step.finished_at = datetime.utcnow()
+                if step.job_id:
+                    job = db.query(models.Job).filter_by(id=step.job_id).first()
+                    if job and (job.status or "").lower() in _active:
+                        job.status = "cancelled"  # stop JobMonitor from polling it further
         db.commit()
     return {"id": run.id, "status": run.status}
