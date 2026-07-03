@@ -142,3 +142,30 @@ class WorkflowRunStep(Base):
 
     run: Mapped[WorkflowRun] = relationship("WorkflowRun", back_populates="steps")
 
+
+class Interaction(Base):
+    __tablename__ = "interactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_message_len: Mapped[int] = mapped_column(Integer, default=0)
+    reply_len: Mapped[int] = mapped_column(Integer, default=0)
+    # [{name, arguments_sanitized(dict), ok(bool)}] — never raw base64/sequences.
+    tool_calls: Mapped[list | None] = mapped_column(JSON, default=list)
+    job_ids: Mapped[list | None] = mapped_column(JSON, default=list)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class ImprovementArtifact(Base):
+    __tablename__ = "improvement_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="proposed")  # proposed|active|rejected
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    stats: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
