@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -65,9 +67,28 @@ def instantiate(payload: InstantiateRequest, db: Session = Depends(get_db), user
 def upload_input(file: UploadFile = File(...), user: models.User = Depends(get_current_user)):
     dest_dir = storage_path("uploads", str(user.id), f"wf_{uuid4().hex}")
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / (file.filename or "input")
+    # Sanitize to a safe basename so a crafted filename can't escape dest_dir.
+    raw_name = PurePosixPath(file.filename or "input").name
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", raw_name) or "input"
+    dest = dest_dir / safe_name
     dest.write_bytes(file.file.read())
     return {"backbone_path": str(dest), "file_name": dest.name}
+
+
+def _validate_owned_upload(backbone_path: str | None, user_id: int) -> str | None:
+    """Reject client-supplied paths outside the user's own uploads tree.
+
+    Prevents arbitrary server file reads / cross-user access via backbone_path."""
+    if not backbone_path:
+        return None
+    uploads_root = storage_path("uploads", str(user_id)).resolve()
+    try:
+        resolved = Path(backbone_path).resolve()
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid backbone_path.")
+    if not resolved.is_relative_to(uploads_root) or not resolved.is_file():
+        raise HTTPException(status_code=400, detail="Invalid backbone_path.")
+    return str(resolved)
 
 
 @router.get("/{workflow_id}")
@@ -85,9 +106,10 @@ def start_run(workflow_id: str, payload: RunRequest, db: Session = Depends(get_d
     wf = db.query(models.Workflow).filter_by(id=workflow_id, owner_id=user.id).first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found.")
+    backbone_path = _validate_owned_upload(payload.backbone_path, user.id)
     run = models.WorkflowRun(
         workflow_id=wf.id, owner_id=user.id, status="queued",
-        input_summary={"sequence": payload.sequence, "backbone_path": payload.backbone_path},
+        input_summary={"sequence": payload.sequence, "backbone_path": backbone_path},
     )
     db.add(run); db.commit(); db.refresh(run)
     orchestrator.start_run(db, run)
