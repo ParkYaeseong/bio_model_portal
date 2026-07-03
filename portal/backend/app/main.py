@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .database import Base, engine
 from .mcp.server import router as mcp_router
-from .routers import assistant, auth, jobs, mcp_tokens, pipelines, rfdiffusion, users, workflows
+from .routers import assistant, auth, chat, jobs, mcp_tokens, pipelines, rfdiffusion, users, workflows
 from .tasks import monitor
 from .workflow.monitor import workflow_monitor
 
@@ -29,6 +29,7 @@ app.include_router(users.router)
 app.include_router(pipelines.router)
 app.include_router(jobs.router)
 app.include_router(assistant.router)
+app.include_router(chat.router)
 app.include_router(rfdiffusion.router)
 app.include_router(workflows.router)
 app.include_router(mcp_tokens.router)

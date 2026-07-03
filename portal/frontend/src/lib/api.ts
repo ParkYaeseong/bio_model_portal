@@ -210,6 +210,40 @@ export const askAssistant = (payload: AssistantRequest, token: string) =>
     body: JSON.stringify(payload),
   });
 
+// --- Execution chatbot (SP3): user's own LLM key runs MCP tools in-process ---
+
+export type ChatProvider = "anthropic" | "openai" | "gemini";
+
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type ChatToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: Record<string, unknown>;
+};
+
+export type ChatRequest = {
+  provider: ChatProvider;
+  api_key: string;
+  model?: string;
+  messages: ChatTurn[];
+};
+
+export type ChatResponse = {
+  reply: string;
+  tool_calls: ChatToolCall[];
+  model: string;
+};
+
+export const chatWithModels = (payload: ChatRequest, token: string) =>
+  apiFetch<ChatResponse>("/api/chat", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 export interface WorkflowSummary {
   id: string;
   name: string;
