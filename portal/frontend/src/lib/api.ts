@@ -250,6 +250,21 @@ export const chatWithModels = (payload: ChatRequest, token: string) =>
     body: JSON.stringify(payload),
   });
 
+// Read-only learned guidance (active/approved artifact) — visible to any user.
+export type Insights = {
+  active: boolean;
+  payload: {
+    recommended_defaults: Record<string, Record<string, unknown>>;
+    warnings: { pipeline: string; condition: string; message: string }[];
+    recipes: { goal: string; steps: string[] }[];
+  };
+  summary: string | null;
+  updated_at: string | null;
+};
+
+export const fetchInsights = (token: string) =>
+  apiFetch<Insights>("/api/selfimprove/insights", token);
+
 export interface WorkflowSummary {
   id: string;
   name: string;

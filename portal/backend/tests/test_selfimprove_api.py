@@ -55,3 +55,35 @@ def test_list_returns_artifacts(client_and_admin):
     r = client.get("/api/selfimprove/artifacts", headers={"X-KBF-User": admin})
     assert r.status_code == 200
     assert isinstance(r.json()["artifacts"], list) and len(r.json()["artifacts"]) >= 1
+
+
+def test_non_admin_cannot_list(client_and_admin):
+    client, _ = client_and_admin
+    r = client.get("/api/selfimprove/artifacts", headers={"X-KBF-User": "regular_user"})
+    assert r.status_code == 403
+
+
+def test_insights_readable_by_any_user(client_and_admin):
+    client, _ = client_and_admin
+    with SessionLocal() as db:
+        db.add(models.ImprovementArtifact(status="proposed", summary="hidden", payload={}, stats={}))
+        db.add(models.ImprovementArtifact(status="active", summary="s",
+            payload={"recommended_defaults": {"esmfold": {"num_recycle": 3}}, "warnings": [], "recipes": []},
+            stats={"n_jobs": 5}))
+        db.commit()
+    r = client.get("/api/selfimprove/insights", headers={"X-KBF-User": "regular_user"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["active"] is True
+    assert body["payload"]["recommended_defaults"]["esmfold"] == {"num_recycle": 3}
+    # only the active artifact's payload is exposed, not proposed/rejected ones
+    assert body["summary"] == "s"
+
+
+def test_insights_empty_when_none_active(client_and_admin):
+    client, _ = client_and_admin
+    r = client.get("/api/selfimprove/insights", headers={"X-KBF-User": "regular_user"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["active"] is False
+    assert body["payload"]["recommended_defaults"] == {}

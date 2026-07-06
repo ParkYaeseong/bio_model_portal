@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { chatWithModels, ChatProvider, ChatToolCall, JobResponse } from "@/lib/api";
+import {
+  chatWithModels,
+  fetchInsights,
+  ChatProvider,
+  ChatToolCall,
+  Insights,
+  JobResponse,
+} from "@/lib/api";
 
 type Props = {
   token: string;
@@ -109,6 +116,10 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
+  // Learned guidance (read-only, aggregate; visible to all users).
+  const [insights, setInsights] = useState<Insights | null>(null);
+  const [insightsOpen, setInsightsOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
@@ -136,6 +147,14 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, loading]);
+
+  // Load learned guidance once the widget opens (best-effort; ignore failures).
+  useEffect(() => {
+    if (!isOpen || insights !== null) return;
+    fetchInsights(token)
+      .then(setInsights)
+      .catch(() => setInsights({ active: false, payload: { recommended_defaults: {}, warnings: [], recipes: [] }, summary: null, updated_at: null }));
+  }, [isOpen, insights, token]);
 
   const handleKeyChange = (value: string) => {
     setApiKey(value);
@@ -364,6 +383,60 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {insights?.active && (
+              <div className="rounded-2xl border border-brand-100 bg-brand-50/50">
+                <button
+                  onClick={() => setInsightsOpen((v) => !v)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold text-brand-700"
+                >
+                  <span>💡 학습된 가이드</span>
+                  <span className="text-brand-400">{insightsOpen ? "▲" : "▼"}</span>
+                </button>
+                {insightsOpen && (
+                  <div className="space-y-2 px-3 pb-3 text-[11px] text-slate-600">
+                    {Object.keys(insights.payload.recommended_defaults).length > 0 && (
+                      <div>
+                        <p className="font-semibold text-slate-500">추천 기본값</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {Object.entries(insights.payload.recommended_defaults).map(([pipeline, params]) => (
+                            <li key={pipeline}>
+                              <span className="font-mono">{pipeline}</span>: {JSON.stringify(params)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {insights.payload.warnings.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-slate-500">실패 주의</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {insights.payload.warnings.map((w, i) => (
+                            <li key={i}>
+                              <span className="font-mono">{w.pipeline}</span>: {w.message}{" "}
+                              <span className="text-slate-400">({w.condition})</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {insights.payload.recipes.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-slate-500">자주 쓰는 조합</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {insights.payload.recipes.map((r, i) => (
+                            <li key={i}>{r.goal}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-slate-400">
+                      전체 사용 기록의 집계(익명)입니다. 참고용이며 실행 전 확인하세요.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

@@ -7,9 +7,12 @@ from .. import models
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db
+from ..selfimprove.feedback import active_artifact
 
 router = APIRouter(prefix="/api/selfimprove", tags=["selfimprove"])
 settings = get_settings()
+
+_EMPTY_PAYLOAD = {"recommended_defaults": {}, "warnings": [], "recipes": []}
 
 
 def _require_admin(user: models.User) -> None:
@@ -23,6 +26,30 @@ def _serialize(a: models.ImprovementArtifact) -> dict:
         "id": a.id, "status": a.status, "summary": a.summary,
         "payload": a.payload, "stats": a.stats,
         "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+@router.get("/insights")
+def insights(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Read-only view of the currently-active (admin-approved) learned guidance.
+
+    Available to any authenticated user — the payload is aggregate/anonymized
+    (recommended defaults, failure warnings, recipes), the same guidance the
+    chatbot already injects into its system prompt. Proposed/rejected artifacts
+    and the review queue stay admin-only (see /artifacts)."""
+    art = active_artifact(db)
+    if art is None:
+        return {"active": False, "payload": dict(_EMPTY_PAYLOAD), "summary": None, "updated_at": None}
+    payload = art.payload or {}
+    return {
+        "active": True,
+        "payload": {
+            "recommended_defaults": payload.get("recommended_defaults") or {},
+            "warnings": payload.get("warnings") or [],
+            "recipes": payload.get("recipes") or [],
+        },
+        "summary": art.summary,
+        "updated_at": art.created_at.isoformat() if art.created_at else None,
     }
 
 
