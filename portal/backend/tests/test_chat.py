@@ -50,6 +50,34 @@ def test_anthropic_tool_result_roundtrip_shape():
     assert messages[1]["content"][0]["tool_use_id"] == "tu_1"
 
 
+def test_provider_list_models_parsing(monkeypatch):
+    from app.chat import providers
+
+    class FakeResp:
+        def __init__(self, data):
+            self._d = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._d
+
+    monkeypatch.setattr(providers.httpx, "get",
+        lambda *a, **k: FakeResp({"data": [{"id": "claude-opus-4-8"}, {"id": "claude-haiku-4-5"}]}))
+    assert providers.AnthropicProvider().list_models("k") == ["claude-opus-4-8", "claude-haiku-4-5"]
+
+    monkeypatch.setattr(providers.httpx, "get",
+        lambda *a, **k: FakeResp({"data": [{"id": "gpt-4o"}, {"id": "text-embedding-3-small"}, {"id": "gpt-5"}]}))
+    assert providers.OpenAIProvider().list_models("k") == ["gpt-4o", "gpt-5"]
+
+    monkeypatch.setattr(providers.httpx, "get", lambda *a, **k: FakeResp({"models": [
+        {"name": "models/gemini-2.0-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/embedding-001", "supportedGenerationMethods": ["embedContent"]},
+    ]}))
+    assert providers.GeminiProvider().list_models("k") == ["gemini-2.0-flash"]
+
+
 def test_get_provider_known_and_unknown():
     assert get_provider("anthropic") is not None
     assert get_provider("openai") is not None

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import {
   chatWithModels,
   fetchInsights,
+  listChatModels,
   ChatProvider,
   ChatToolCall,
   Insights,
@@ -44,6 +45,7 @@ const CONV_KEY = "bmp_chat_conversations";
 const MAX_CONVERSATIONS = 30;
 
 const providerKeyStore = (provider: ChatProvider) => `bmp_chat_key_${provider}`;
+const providerModelStore = (provider: ChatProvider) => `bmp_chat_model_${provider}`;
 
 const loadConversations = (): Conversation[] => {
   if (typeof window === "undefined") return [];
@@ -104,6 +106,10 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   const [provider, setProvider] = useState<ChatProvider>("anthropic");
   const [apiKey, setApiKey] = useState("");
+  const apiKeyRef = useRef("");
+  const [model, setModel] = useState(""); // "" = provider default
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [contextJobId, setContextJobId] = useState<string | null>(initialJobId ?? null);
@@ -123,20 +129,59 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
-  // Load persisted provider + key + conversations from the browser.
+  // Load persisted provider + key + model + conversations from the browser.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = (window.localStorage.getItem("bmp_chat_provider") as ChatProvider) || "anthropic";
     setProvider(saved);
-    setApiKey(window.localStorage.getItem(providerKeyStore(saved)) || "");
+    const key = window.localStorage.getItem(providerKeyStore(saved)) || "";
+    setApiKey(key);
+    apiKeyRef.current = key;
+    setModel(window.localStorage.getItem(providerModelStore(saved)) || "");
     setConversations(loadConversations());
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem("bmp_chat_provider", provider);
-    setApiKey(window.localStorage.getItem(providerKeyStore(provider)) || "");
+    const key = window.localStorage.getItem(providerKeyStore(provider)) || "";
+    setApiKey(key);
+    apiKeyRef.current = key;
+    setModel(window.localStorage.getItem(providerModelStore(provider)) || "");
+    setModels([]); // provider changed — clear the stale list
   }, [provider]);
+
+  const loadModels = async () => {
+    const key = apiKeyRef.current.trim();
+    if (!key) {
+      setError("모델을 불러오려면 먼저 API 키를 입력하세요.");
+      return;
+    }
+    setModelsLoading(true);
+    setError(null);
+    try {
+      const res = await listChatModels({ provider, api_key: key }, token);
+      setModels(res.models || []);
+    } catch (err: any) {
+      setError(err.message || "모델 목록을 불러오지 못했습니다.");
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  // Auto-load models when the widget opens or the provider changes, if a key is
+  // already present. (Not keyed on apiKey, to avoid refetching on every keystroke.)
+  useEffect(() => {
+    if (isOpen && apiKeyRef.current.trim() && models.length === 0 && !modelsLoading) {
+      void loadModels();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, provider]);
+
+  const handleModelChange = (value: string) => {
+    setModel(value);
+    if (typeof window !== "undefined") window.localStorage.setItem(providerModelStore(provider), value);
+  };
 
   useEffect(() => {
     if (initialJobId) setContextJobId(initialJobId);
@@ -158,6 +203,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   const handleKeyChange = (value: string) => {
     setApiKey(value);
+    apiKeyRef.current = value;
     if (typeof window !== "undefined") window.localStorage.setItem(providerKeyStore(provider), value);
   };
 
@@ -263,7 +309,13 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
     const sentAttachments = attachments.map((a) => ({ name: a.name, base64: a.base64 }));
     try {
       const response = await chatWithModels(
-        { provider, api_key: apiKey.trim(), messages: apiMessages, attachments: sentAttachments },
+        {
+          provider,
+          api_key: apiKey.trim(),
+          model: model || undefined,
+          messages: apiMessages,
+          attachments: sentAttachments,
+        },
         token,
       );
       const finalMessages: ChatMessage[] = [
@@ -366,6 +418,30 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
                 placeholder="API 키 (브라우저에만 저장)"
                 className="flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-xs"
               />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={model}
+                onChange={(e) => handleModelChange(e.target.value)}
+                className="min-w-0 flex-1 truncate rounded-2xl border border-slate-200 px-3 py-2 text-xs"
+              >
+                <option value="">모델: 기본값</option>
+                {model && !models.includes(model) && <option value={model}>{model} (저장됨)</option>}
+                {models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => void loadModels()}
+                disabled={modelsLoading}
+                title="사용 가능한 모델 불러오기"
+                className="shrink-0 rounded-full border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                {modelsLoading ? "불러오는 중..." : models.length ? `🔄 ${models.length}` : "모델 불러오기"}
+              </button>
             </div>
 
             {jobs && jobs.length > 0 && (

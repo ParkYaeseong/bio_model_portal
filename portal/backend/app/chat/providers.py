@@ -40,6 +40,9 @@ class Provider:
     name: str = ""
     default_model: str = ""
 
+    def list_models(self, api_key: str) -> list[str]:  # pragma: no cover - interface
+        raise NotImplementedError
+
     def format_tools(self, tools: dict) -> list[dict]:  # pragma: no cover - interface
         raise NotImplementedError
 
@@ -73,6 +76,21 @@ def _clean_history(history: list[dict]) -> list[dict]:
 class AnthropicProvider(Provider):
     name = "anthropic"
     default_model = "claude-opus-4-8"
+
+    def list_models(self, api_key: str) -> list[str]:
+        try:
+            resp = httpx.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                params={"limit": 1000},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(_http_detail(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
+        return [m["id"] for m in (resp.json().get("data") or []) if m.get("id")]
 
     def format_tools(self, tools: dict) -> list[dict]:
         return [
@@ -142,6 +160,25 @@ class OpenAIProvider(Provider):
     name = "openai"
     default_model = "gpt-4o"
 
+    # /v1/models has no capability field; exclude obvious non-chat families.
+    _NON_CHAT = ("embedding", "whisper", "tts", "dall-e", "moderation",
+                 "audio", "image", "realtime", "transcribe", "search", "davinci", "babbage")
+
+    def list_models(self, api_key: str) -> list[str]:
+        try:
+            resp = httpx.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(_http_detail(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
+        ids = [m["id"] for m in (resp.json().get("data") or []) if m.get("id")]
+        return sorted(i for i in ids if not any(x in i for x in self._NON_CHAT))
+
     def format_tools(self, tools: dict) -> list[dict]:
         return [
             {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}
@@ -196,6 +233,26 @@ class OpenAIProvider(Provider):
 class GeminiProvider(Provider):
     name = "gemini"
     default_model = "gemini-2.0-flash"
+
+    def list_models(self, api_key: str) -> list[str]:
+        try:
+            resp = httpx.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key},
+                params={"pageSize": 1000},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(_http_detail(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
+        out = []
+        for m in (resp.json().get("models") or []):
+            if "generateContent" in (m.get("supportedGenerationMethods") or []):
+                name = m.get("name") or ""
+                out.append(name.split("/", 1)[1] if name.startswith("models/") else name)
+        return sorted(out)
 
     def format_tools(self, tools: dict) -> list[dict]:
         return [

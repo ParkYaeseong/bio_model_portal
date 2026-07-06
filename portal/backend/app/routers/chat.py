@@ -32,6 +32,11 @@ class ChatRequest(BaseModel):
     attachments: list[ChatAttachment] = []
 
 
+class ModelsRequest(BaseModel):
+    provider: str
+    api_key: str
+
+
 class ToolCall(BaseModel):
     name: str
     arguments: dict
@@ -42,6 +47,26 @@ class ChatResponse(BaseModel):
     reply: str
     tool_calls: list[ToolCall]
     model: str
+
+
+@router.post("/models")
+def list_models(
+    payload: ModelsRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """List the models the user's key can use for the chosen provider (live, not
+    hardcoded), so the UI can offer a real model picker."""
+    provider = get_provider(payload.provider)
+    if provider is None:
+        raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
+    api_key = (payload.api_key or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required.")
+    try:
+        available = provider.list_models(api_key)
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=f"model list failed: {exc}") from exc
+    return {"models": available, "default": provider.default_model}
 
 
 @router.post("", response_model=ChatResponse)

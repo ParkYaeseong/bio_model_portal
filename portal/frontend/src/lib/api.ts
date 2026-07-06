@@ -250,6 +250,13 @@ export const chatWithModels = (payload: ChatRequest, token: string) =>
     body: JSON.stringify(payload),
   });
 
+// Live model list for the chosen provider using the user's key (not hardcoded).
+export const listChatModels = (payload: { provider: ChatProvider; api_key: string }, token: string) =>
+  apiFetch<{ models: string[]; default: string }>("/api/chat/models", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 // Read-only learned guidance (active/approved artifact) — visible to any user.
 export type Insights = {
   active: boolean;
