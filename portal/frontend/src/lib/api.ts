@@ -265,6 +265,36 @@ export type Insights = {
 export const fetchInsights = (token: string) =>
   apiFetch<Insights>("/api/selfimprove/insights", token);
 
+// Admin review of self-improvement artifacts.
+export type ImprovementArtifact = {
+  id: string;
+  status: string; // proposed | active | rejected
+  summary: string;
+  payload: Insights["payload"];
+  stats: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export const fetchSelfimproveAdmin = (token: string) =>
+  apiFetch<{ is_admin: boolean }>("/api/selfimprove/admin", token);
+
+export const listArtifacts = (token: string) =>
+  apiFetch<{ artifacts: ImprovementArtifact[] }>("/api/selfimprove/artifacts", token);
+
+export const activateArtifact = (token: string, id: string) =>
+  apiFetch<{ ok: boolean; id: string; status: string }>(
+    `/api/selfimprove/artifacts/${id}/activate`,
+    token,
+    { method: "POST" },
+  );
+
+export const rejectArtifact = (token: string, id: string) =>
+  apiFetch<{ ok: boolean; id: string; status: string }>(
+    `/api/selfimprove/artifacts/${id}/reject`,
+    token,
+    { method: "POST" },
+  );
+
 export interface WorkflowSummary {
   id: string;
   name: string;

@@ -15,9 +15,13 @@ settings = get_settings()
 _EMPTY_PAYLOAD = {"recommended_defaults": {}, "warnings": [], "recipes": []}
 
 
-def _require_admin(user: models.User) -> None:
+def _is_admin(user: models.User) -> bool:
     allow = {u.strip() for u in (settings.selfimprove_admin_users or "").split(",") if u.strip()}
-    if user.username not in allow:
+    return user.username in allow
+
+
+def _require_admin(user: models.User) -> None:
+    if not _is_admin(user):
         raise HTTPException(status_code=403, detail="self-improvement admin only")
 
 
@@ -51,6 +55,12 @@ def insights(db: Session = Depends(get_db), current_user: models.User = Depends(
         "summary": art.summary,
         "updated_at": art.created_at.isoformat() if art.created_at else None,
     }
+
+
+@router.get("/admin")
+def admin_status(current_user: models.User = Depends(get_current_user)):
+    """Whether the caller may review/approve artifacts — drives UI link visibility."""
+    return {"is_admin": _is_admin(current_user)}
 
 
 @router.get("/artifacts")

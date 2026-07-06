@@ -18,6 +18,7 @@ import {
   deleteJob,
   downloadArchive,
   downloadArtifact,
+  fetchSelfimproveAdmin,
 } from "@/lib/api";
 import { triggerDownload } from "@/lib/download";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
@@ -161,6 +162,7 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
   );
 
   const { data: pipelineData } = useSWR(["pipelines"], () => fetchPipelines(token), { onError: handleAuthError });
+  const { data: siAdmin } = useSWR(["si-admin"], () => fetchSelfimproveAdmin(token));
   const { data: jobs, mutate: refreshJobs, isLoading: jobsLoading } = useSWR(
     ["jobs"],
     () => fetchJobs(token),
@@ -520,6 +522,14 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
             >
               AI 연결
             </Link>
+            {siAdmin?.is_admin && (
+              <Link
+                href="/selfimprove"
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+              >
+                자가개선
+              </Link>
+            )}
             <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
               로그아웃
             </button>

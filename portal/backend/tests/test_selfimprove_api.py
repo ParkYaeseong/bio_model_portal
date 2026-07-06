@@ -80,6 +80,18 @@ def test_insights_readable_by_any_user(client_and_admin):
     assert body["summary"] == "s"
 
 
+def test_admin_status_true_for_admin(client_and_admin):
+    client, admin = client_and_admin
+    r = client.get("/api/selfimprove/admin", headers={"X-KBF-User": admin})
+    assert r.status_code == 200 and r.json()["is_admin"] is True
+
+
+def test_admin_status_false_for_regular(client_and_admin):
+    client, _ = client_and_admin
+    r = client.get("/api/selfimprove/admin", headers={"X-KBF-User": "regular_user"})
+    assert r.status_code == 200 and r.json()["is_admin"] is False
+
+
 def test_insights_empty_when_none_active(client_and_admin):
     client, _ = client_and_admin
     r = client.get("/api/selfimprove/insights", headers={"X-KBF-User": "regular_user"})
