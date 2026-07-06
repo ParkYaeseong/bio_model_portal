@@ -9,6 +9,7 @@ from .config import get_settings
 from .database import Base, engine
 from .mcp.server import router as mcp_router
 from .routers import assistant, auth, chat, jobs, mcp_tokens, pipelines, rfdiffusion, selfimprove, users, workflows
+from .selfimprove.scheduler import selfimprove_scheduler
 from .tasks import monitor
 from .workflow.monitor import workflow_monitor
 
@@ -41,12 +42,14 @@ app.include_router(mcp_router)
 def start_monitor() -> None:
     monitor.start()
     workflow_monitor.start()
+    selfimprove_scheduler.start()
 
 
 @app.on_event("shutdown")
 def stop_monitor() -> None:
     monitor.stop()
     workflow_monitor.stop()
+    selfimprove_scheduler.stop()
 
 
 @app.get("/health")
