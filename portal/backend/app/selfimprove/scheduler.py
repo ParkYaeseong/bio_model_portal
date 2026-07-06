@@ -12,8 +12,11 @@ settings = get_settings()
 
 
 def run_cycle(db: Session) -> "object":
-    """Compute one artifact; auto-activate it if configured. Returns the artifact."""
+    """Compute one artifact; auto-activate it if configured. Returns the artifact,
+    or None when there was no new signal to propose (empty/duplicate)."""
     art = analyze.compute_artifact(db)
+    if art is None:
+        return None
     if settings.selfimprove_autoactivate:
         from .. import models
         for other in db.query(models.ImprovementArtifact).filter_by(status="active").all():

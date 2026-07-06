@@ -51,9 +51,22 @@ def test_warning_from_repeated_failure():
         assert any("PDB" in w["message"] for w in warns)
 
 
-def test_no_data_yields_empty_artifact():
+def test_no_signal_creates_nothing():
     with SessionLocal() as db:
         art = analyze.compute_artifact(db)
-        assert art.payload["recommended_defaults"] == {}
-        assert art.payload["warnings"] == []
-        assert art.payload["recipes"] == []
+        assert art is None
+        assert db.query(models.ImprovementArtifact).count() == 0
+
+
+def test_duplicate_payload_not_recreated():
+    with SessionLocal() as db:
+        u = _user(db)
+        for _ in range(3):
+            j = _job(db, u.id, "esmfold", "completed")
+            _interaction(db, u.id, "esmfold", {"num_recycle": 3}, j)
+        first = analyze.compute_artifact(db)
+        assert first is not None
+        # Same underlying data → identical payload → no duplicate row.
+        second = analyze.compute_artifact(db)
+        assert second is None
+        assert db.query(models.ImprovementArtifact).count() == 1

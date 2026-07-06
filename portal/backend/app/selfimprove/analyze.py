@@ -17,7 +17,7 @@ def _param_key(args: dict) -> str:
     return json.dumps(clean, sort_keys=True, ensure_ascii=False)
 
 
-def compute_artifact(db: Session) -> models.ImprovementArtifact:
+def compute_artifact(db: Session) -> models.ImprovementArtifact | None:
     interactions = db.query(models.Interaction).order_by(models.Interaction.created_at).all()
 
     # pipeline -> Counter(param_key) among successful runs; and success/fail tallies
@@ -83,6 +83,19 @@ def compute_artifact(db: Session) -> models.ImprovementArtifact:
 
     payload = {"recommended_defaults": recommended, "warnings": warnings, "recipes": recipes}
     stats = {"n_interactions": len(interactions), "n_jobs": n_jobs}
+
+    # Don't clutter the review queue: skip when there's no actionable signal, or
+    # when the payload is identical to the most recent artifact (any status).
+    if not (recommended or warnings or recipes):
+        return None
+    latest = (
+        db.query(models.ImprovementArtifact)
+        .order_by(models.ImprovementArtifact.created_at.desc())
+        .first()
+    )
+    if latest and (latest.payload or {}) == payload:
+        return None
+
     parts = []
     if recommended:
         parts.append(f"{len(recommended)} default(s)")
@@ -90,7 +103,7 @@ def compute_artifact(db: Session) -> models.ImprovementArtifact:
         parts.append(f"{len(warnings)} warning(s)")
     if recipes:
         parts.append(f"{len(recipes)} recipe(s)")
-    summary = ", ".join(parts) or "no signal yet"
+    summary = ", ".join(parts)
 
     art = models.ImprovementArtifact(status="proposed", summary=summary, payload=payload, stats=stats)
     db.add(art)
