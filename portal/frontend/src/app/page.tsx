@@ -427,17 +427,27 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
     }
 
     // Assemble the sequence from the per-chain multimer editor when active.
+    // If chains aren't typed but a FASTA file is uploaded, let the uploaded file
+    // provide the multimer chains (the gateway assembles them).
     let effectiveSequence = sequence.trim();
     if (multimerActive) {
       const chains = multimerChains.map((c) => c.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
-      if (chains.length < 2) {
-        setUploadError("멀티머(복합체)는 서열이 있는 체인을 2개 이상 입력하세요.");
+      const hasUpload = uploads.length + jobSpecificUploads.length > 0;
+      if (chains.length >= 2) {
+        effectiveSequence =
+          selectedPipeline.key === "colabfold"
+            ? chains.join(":")
+            : chains.map((seq, i) => `>chain_${i + 1}\n${seq}`).join("\n") + "\n";
+      } else if (hasUpload) {
+        // Multimer chains come from the uploaded FASTA; don't send a stale
+        // typed sequence.
+        effectiveSequence = "";
+      } else {
+        setUploadError(
+          "멀티머(복합체)는 서열이 있는 체인을 2개 이상 입력하거나, 여러 체인이 담긴 FASTA 파일을 업로드하세요."
+        );
         return;
       }
-      effectiveSequence =
-        selectedPipeline.key === "colabfold"
-          ? chains.join(":")
-          : chains.map((seq, i) => `>chain_${i + 1}\n${seq}`).join("\n") + "\n";
     }
 
     setUploadError(null);
