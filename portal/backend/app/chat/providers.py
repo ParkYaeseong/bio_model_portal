@@ -24,7 +24,7 @@ _TIMEOUT = 120
 _MAX_TOKENS = 2048
 # Local self-hosted EXAONE shares a GPU with the folding workers and is slower
 # than the elastic commercial APIs; give its completions a larger read timeout.
-_LOCAL_TIMEOUT = 180
+_LOCAL_TIMEOUT = 300
 
 # Reasoning models (EXAONE) may emit chain-of-thought wrapped in <think>...</think>
 # in the reply text; strip it so users never see the scratchpad.
