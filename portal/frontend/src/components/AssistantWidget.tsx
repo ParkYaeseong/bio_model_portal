@@ -125,6 +125,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   // Conversation persistence (browser-only; never sent to our DB).
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [showConvList, setShowConvList] = useState(false);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
 
   // Learned guidance (read-only, aggregate; visible to all users).
@@ -257,6 +258,16 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
     if (activeConvId === id) startNewChat();
   };
 
+  const clearAllConversations = () => {
+    if (typeof window !== "undefined" && !window.confirm("모든 대화를 삭제할까요? 되돌릴 수 없습니다.")) {
+      return;
+    }
+    setConversations([]);
+    persistConversations([]);
+    setShowConvList(false);
+    startNewChat();
+  };
+
   // --- Attachments ----------------------------------------------------------
 
   const addFiles = async (fileList: FileList | null) => {
@@ -378,33 +389,68 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
           </div>
 
           {/* Conversation controls */}
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2">
-            <button
-              onClick={startNewChat}
-              className="rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
-            >
-              + 새 대화
-            </button>
-            <select
-              value={activeConvId ?? ""}
-              onChange={(e) => (e.target.value ? loadConversation(e.target.value) : startNewChat())}
-              className="min-w-0 flex-1 truncate rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
-            >
-              <option value="">대화 목록 ({sortedConversations.length})</option>
-              {sortedConversations.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
-            {activeConvId && (
+          <div className="border-b border-slate-100 px-4 py-2">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => deleteConversation(activeConvId)}
-                title="이 대화 삭제"
-                className="rounded-full border border-rose-200 px-2 py-1 text-xs text-rose-500"
+                onClick={startNewChat}
+                className="rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
               >
-                🗑
+                + 새 대화
               </button>
+              <button
+                onClick={() => setShowConvList((v) => !v)}
+                className="min-w-0 flex-1 truncate rounded-full border border-slate-200 px-3 py-1 text-left text-xs text-slate-600 hover:border-slate-300"
+                title="저장된 대화 목록"
+              >
+                대화 목록 ({sortedConversations.length}) {showConvList ? "▲" : "▼"}
+              </button>
+            </div>
+            {showConvList && (
+              <div className="mt-2 rounded-2xl border border-slate-200 bg-white">
+                {sortedConversations.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-slate-400">저장된 대화가 없습니다.</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5">
+                      <span className="text-[11px] text-slate-400">저장된 대화</span>
+                      <button
+                        onClick={clearAllConversations}
+                        className="text-[11px] font-semibold text-rose-500 hover:underline"
+                      >
+                        전체 삭제
+                      </button>
+                    </div>
+                    <ul className="max-h-48 overflow-y-auto py-1">
+                      {sortedConversations.map((c) => (
+                        <li
+                          key={c.id}
+                          className={`flex items-center gap-2 px-3 py-1.5 text-xs ${
+                            c.id === activeConvId ? "bg-brand-50" : ""
+                          }`}
+                        >
+                          <button
+                            onClick={() => {
+                              loadConversation(c.id);
+                              setShowConvList(false);
+                            }}
+                            className="min-w-0 flex-1 truncate text-left text-slate-700 hover:text-brand-700"
+                            title={c.title}
+                          >
+                            {c.title}
+                          </button>
+                          <button
+                            onClick={() => deleteConversation(c.id)}
+                            title="이 대화 삭제"
+                            className="shrink-0 rounded-full border border-rose-200 px-2 py-0.5 text-rose-500 hover:bg-rose-50"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
             )}
           </div>
 
