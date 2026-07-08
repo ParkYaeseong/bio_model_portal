@@ -22,6 +22,9 @@ from ..config import get_settings
 
 _TIMEOUT = 120
 _MAX_TOKENS = 2048
+# Local self-hosted EXAONE shares a GPU with the folding workers and is slower
+# than the elastic commercial APIs; give its completions a larger read timeout.
+_LOCAL_TIMEOUT = 180
 
 # Reasoning models (EXAONE) may emit chain-of-thought wrapped in <think>...</think>
 # in the reply text; strip it so users never see the scratchpad.
@@ -382,11 +385,15 @@ class ExaoneProvider(OpenAIProvider):
         payload_messages = [{"role": "system", "content": system}] + messages
         try:
             # No Authorization header — the local endpoint requires no key.
+            # The local endpoint serves a single model, so ignore any stale
+            # client-supplied model id (would 404) and use the served model.
+            # Bound generation with max_tokens and use the longer local timeout.
             resp = httpx.post(
                 f"{self._base_url()}/chat/completions",
                 headers={"Content-Type": "application/json"},
-                timeout=_TIMEOUT,
-                json={"model": model, "messages": payload_messages, "tools": tools},
+                timeout=_LOCAL_TIMEOUT,
+                json={"model": self.default_model, "messages": payload_messages,
+                      "tools": tools, "max_tokens": _MAX_TOKENS},
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
