@@ -46,3 +46,7 @@ portal/frontend/.env.production
 portal/frontend/tsconfig.tsbuildinfo
 sso/.env
 sso/.venv/
+
+# gateway runtime job state (persisted in-flight jobs)
+gateway/jobs_state.json
+gateway/jobs_state.tmp
