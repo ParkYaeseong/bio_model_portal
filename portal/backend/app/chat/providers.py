@@ -29,7 +29,13 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
 def _strip_think(text: str) -> str:
-    return _THINK_RE.sub("", text or "").strip()
+    # EXAONE may wrap CoT in <think>...</think>, or emit leading reasoning
+    # terminated by a lone </think> (no opening tag). Keep only what follows
+    # the final </think>, then drop any residual paired tags.
+    text = text or ""
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return _THINK_RE.sub("", text).strip()
 
 
 class ProviderError(Exception):
