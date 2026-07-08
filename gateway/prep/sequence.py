@@ -68,9 +68,48 @@ def _archive_has_fasta(input_archive: object) -> bool:
     return any(str(n).lower().endswith(_FASTA_SUFFIXES) for n in names)
 
 
+def _parse_fasta_sequences(text: str) -> list[str]:
+    """One sequence per '>' record (headers dropped, whitespace removed).
+
+    A body with no '>' header is treated as a single bare sequence."""
+    records: list[str] = []
+    current: list[str] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith(">"):
+            if current:
+                records.append("".join(current))
+                current = []
+            continue
+        current.append(s)
+    if current:
+        records.append("".join(current))
+    return [r.strip().upper() for r in records if r.strip()]
+
+
+def sequence_from_fasta_archive(payload: dict) -> str:
+    """Build a folding-input sequence from an uploaded FASTA.
+
+    ESMFold/ColabFold take an inline sequence, not a FASTA file. Recover it so a
+    FASTA upload (the format the UI explicitly invites) reaches the worker: a
+    single record folds as a monomer; two or more are joined with ':' so the
+    model auto-detects the multimer (ColabFold runs alphafold2_multimer_v3;
+    facebook/esmfold_v1 inserts a chain break)."""
+    from . import structure
+
+    fasta_text = structure.extract_fasta_text(payload)
+    if not fasta_text:
+        return ""
+    seqs = _parse_fasta_sequences(fasta_text)
+    return ":".join(seqs) if seqs else ""
+
+
 def build_folding_input(payload: dict, *, model: str) -> dict:
     """Sequence-input models (ESMFold/ColabFold): pass the sequence through, or
-    recover it from an uploaded PDB/CIF (longest chain) when none was typed."""
+    recover it from an uploaded PDB/CIF (longest chain) or FASTA (one record =>
+    monomer, many => ':'-joined multimer) when none was typed."""
     from .defaults import apply_defaults
 
     out = dict(payload)
@@ -85,9 +124,16 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
             # through instead of failing / dropping it.
             return out
         else:
-            raise ValueError(
-                f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
-            )
+            fasta_seq = sequence_from_fasta_archive(out)
+            if fasta_seq:
+                # ESMFold/ColabFold consume an inline sequence, not a FASTA file.
+                # One record => monomer; many => ':'-joined so the model
+                # auto-detects the multimer.
+                out["sequence"] = fasta_seq
+            else:
+                raise ValueError(
+                    f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
+                )
     # ColabFold has known, worker-accepted knobs; pin their defaults. ESMFold and
     # AlphaFold2 are left untouched (worker param names unverified / UI-required).
     if model == "ColabFold":

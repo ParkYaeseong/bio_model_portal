@@ -66,19 +66,56 @@ def test_af2_monomer_inline_sequence_pops_archive():
     assert "input_archive" not in out
 
 
-def test_colabfold_fasta_archive_still_raises():
-    # Non-AF2 models do not consume a FASTA archive; must still require a sequence.
-    with pytest.raises(ValueError):
-        sequence.build_folding_input(
-            {"input_archive": _fasta_archive("fasta_dir")}, model="ColabFold"
-        )
+def _uploaded_fasta_archive(body: bytes, name="input.fasta"):
+    # A tar.gz carrying a FASTA, tagged kind='uploaded' exactly as the portal
+    # builds it for a ColabFold/ESMFold file upload (NOT the AF2 fasta_dir tag).
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        ti = tarfile.TarInfo(name); ti.size = len(body); t.addfile(ti, io.BytesIO(body))
+    return {
+        "base64": base64.b64encode(buf.getvalue()).decode(),
+        "kind": "uploaded",
+        "file_names": [name],
+    }
 
 
-def test_esmfold_fasta_archive_still_raises():
+def test_colabfold_fasta_upload_multimer_becomes_colon_sequence():
+    # Two records => a multimer; ColabFold auto-runs multimer when it sees ':'.
+    archive = _uploaded_fasta_archive(b">A\nMKTAYIAKQR\n>B\nGGGSGGGS\n")
+    out = sequence.build_folding_input({"input_archive": archive}, model="ColabFold")
+    assert out["sequence"] == "MKTAYIAKQR:GGGSGGGS"
+    assert "input_archive" not in out
+
+
+def test_colabfold_fasta_upload_monomer_single_record():
+    archive = _uploaded_fasta_archive(b">only\nMKTAYIAKQR\n")
+    out = sequence.build_folding_input({"input_archive": archive}, model="ColabFold")
+    assert out["sequence"] == "MKTAYIAKQR"
+    assert ":" not in out["sequence"]
+
+
+def test_esmfold_fasta_upload_becomes_inline_sequence():
+    archive = _uploaded_fasta_archive(b">A\nMKTAYIAKQR\n>B\nGGGSGGGS\n")
+    out = sequence.build_folding_input({"input_archive": archive}, model="ESMFold")
+    assert out["sequence"] == "MKTAYIAKQR:GGGSGGGS"
+    assert "input_archive" not in out
+
+
+def test_folding_headerless_fasta_is_one_bare_sequence():
+    archive = _uploaded_fasta_archive(b"MKTAYIAKQR\n", name="seq.fasta")
+    out = sequence.build_folding_input({"input_archive": archive}, model="ColabFold")
+    assert out["sequence"] == "MKTAYIAKQR"
+
+
+def test_folding_still_errors_when_archive_has_no_sequence():
+    # An archive with neither PDB nor FASTA must still fail fast.
+    buf = io.BytesIO()
+    d = b"# just a note"
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        ti = tarfile.TarInfo("readme.md"); ti.size = len(d); t.addfile(ti, io.BytesIO(d))
+    archive = {"base64": base64.b64encode(buf.getvalue()).decode(), "kind": "uploaded"}
     with pytest.raises(ValueError):
-        sequence.build_folding_input(
-            {"input_archive": _fasta_archive("fasta_paths")}, model="ESMFold"
-        )
+        sequence.build_folding_input({"input_archive": archive}, model="ColabFold")
 
 
 def test_af2_extra_flags_renamed_to_alphafold_extra_flags():

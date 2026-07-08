@@ -19,6 +19,24 @@ def extract_pdb_text(payload: dict) -> str | None:
                         return f.read().decode("utf-8", errors="replace")
     return None
 
+_FASTA_SUFFIXES = (".fasta", ".fa", ".faa", ".fna")
+
+def extract_fasta_text(payload: dict) -> str | None:
+    """Return FASTA text from payload.input_archive (tar.gz base64), if the
+    upload carries a FASTA file (deterministic: first match by sorted name)."""
+    archive = payload.get("input_archive")
+    if not (isinstance(archive, dict) and archive.get("base64")):
+        return None
+    raw = base64.b64decode(archive["base64"])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+        members = sorted((m for m in tar.getmembers() if m.isfile()), key=lambda m: m.name)
+        for m in members:
+            if m.name.lower().endswith(_FASTA_SUFFIXES):
+                f = tar.extractfile(m)
+                if f:
+                    return f.read().decode("utf-8", errors="replace")
+    return None
+
 def preprocess(pdb_text: str, chains: list[str] | None = None):
     """Normalize (mmcif->pdb, first model) then strip non-positive resseq + renumber from 1.
     Returns (clean_pdb_text, mapping)."""
