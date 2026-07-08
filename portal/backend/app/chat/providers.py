@@ -13,12 +13,23 @@ be inconsistent for a single provider abstraction).
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
 
+from ..config import get_settings
+
 _TIMEOUT = 120
 _MAX_TOKENS = 2048
+
+# Reasoning models (EXAONE) may emit chain-of-thought wrapped in <think>...</think>
+# in the reply text; strip it so users never see the scratchpad.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think(text: str) -> str:
+    return _THINK_RE.sub("", text or "").strip()
 
 
 class ProviderError(Exception):
@@ -39,6 +50,9 @@ class Provider:
 
     name: str = ""
     default_model: str = ""
+    # Keyed "bring-your-own-key" providers require a user-supplied API key;
+    # the self-hosted EXAONE path sets this False (no key needed).
+    requires_api_key: bool = True
 
     def list_models(self, api_key: str) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError
@@ -328,15 +342,72 @@ class GeminiProvider(Provider):
         )
 
 
+class ExaoneProvider(OpenAIProvider):
+    """Self-hosted EXAONE served by vLLM at an OpenAI-compatible endpoint.
+
+    The DEFAULT provider: no API key / no Authorization header, so the chatbot
+    works out-of-the-box behind BMP's SSO gate. Reuses the OpenAI wire format
+    (tool_calls parsing, message shapes) and overrides only the endpoint, auth,
+    model discovery, and <think>...</think> stripping (EXAONE is a reasoning
+    model that may emit chain-of-thought in the reply text).
+    """
+
+    name = "exaone"
+    requires_api_key = False
+
+    def _base_url(self) -> str:
+        return get_settings().local_llm_url.rstrip("/")
+
+    @property
+    def default_model(self) -> str:  # type: ignore[override]
+        return get_settings().local_llm_model
+
+    def list_models(self, api_key: str) -> list[str]:
+        try:
+            resp = httpx.get(f"{self._base_url()}/models", timeout=_TIMEOUT)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(_http_detail(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
+        return [m["id"] for m in (resp.json().get("data") or []) if m.get("id")]
+
+    def request(self, api_key: str, model: str, system: str, messages: list[dict], tools: list[dict]) -> dict:
+        payload_messages = [{"role": "system", "content": system}] + messages
+        try:
+            # No Authorization header — the local endpoint requires no key.
+            resp = httpx.post(
+                f"{self._base_url()}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                timeout=_TIMEOUT,
+                json={"model": model, "messages": payload_messages, "tools": tools},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderError(_http_detail(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error ({type(exc).__name__})") from exc
+        return resp.json()
+
+    def parse(self, resp: dict) -> ParsedTurn:
+        parsed = super().parse(resp)
+        return ParsedTurn(_strip_think(parsed.text), parsed.tool_calls, parsed.stop)
+
+
 _PROVIDERS: dict[str, Provider] = {
     "anthropic": AnthropicProvider(),
     "openai": OpenAIProvider(),
     "gemini": GeminiProvider(),
+    "exaone": ExaoneProvider(),
 }
+
+# Friendly aliases → canonical provider key.
+_ALIASES: dict[str, str] = {"local": "exaone"}
 
 
 def get_provider(name: str) -> Provider | None:
-    return _PROVIDERS.get((name or "").lower())
+    key = (name or "").lower()
+    return _PROVIDERS.get(_ALIASES.get(key, key))
 
 
 def _http_detail(exc: httpx.HTTPStatusError) -> str:

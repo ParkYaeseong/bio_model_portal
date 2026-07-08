@@ -212,7 +212,7 @@ export const askAssistant = (payload: AssistantRequest, token: string) =>
 
 // --- Execution chatbot (SP3): user's own LLM key runs MCP tools in-process ---
 
-export type ChatProvider = "anthropic" | "openai" | "gemini";
+export type ChatProvider = "exaone" | "anthropic" | "openai" | "gemini";
 
 export type ChatTurn = {
   role: "user" | "assistant";

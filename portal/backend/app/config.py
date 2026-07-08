@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
 
+    # Self-hosted local LLM (EXAONE via vLLM, OpenAI-compatible, no API key).
+    # Default chat provider — works out-of-the-box behind the SSO gate.
+    local_llm_url: str = Field(default="http://211.188.35.221:8000/v1", env="LOCAL_LLM_URL")
+    local_llm_model: str = Field(default="LGAI-EXAONE/EXAONE-4.5-33B-AWQ", env="LOCAL_LLM_MODEL")
+
     # --- Self-improvement (SP4) ---
     selfimprove_enabled: bool = Field(default=True, env="SELFIMPROVE_ENABLED")
     selfimprove_interval_s: int = Field(default=86400, env="SELFIMPROVE_INTERVAL_S")

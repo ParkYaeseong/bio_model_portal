@@ -35,10 +35,15 @@ type Conversation = {
 };
 
 const PROVIDERS: { value: ChatProvider; label: string }[] = [
+  { value: "exaone", label: "로컬 EXAONE (키 불필요)" },
   { value: "anthropic", label: "Claude" },
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
 ];
+
+// EXAONE is self-hosted behind the SSO gate — it needs no API key.
+const DEFAULT_PROVIDER: ChatProvider = "exaone";
+const providerNeedsKey = (provider: ChatProvider) => provider !== "exaone";
 
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024; // 40 MB total across attachments
 const CONV_KEY = "bmp_chat_conversations";
@@ -104,7 +109,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const [expanded, setExpanded] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
 
-  const [provider, setProvider] = useState<ChatProvider>("anthropic");
+  const [provider, setProvider] = useState<ChatProvider>(DEFAULT_PROVIDER);
   const [apiKey, setApiKey] = useState("");
   const apiKeyRef = useRef("");
   const [model, setModel] = useState(""); // "" = provider default
@@ -132,7 +137,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   // Load persisted provider + key + model + conversations from the browser.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const saved = (window.localStorage.getItem("bmp_chat_provider") as ChatProvider) || "anthropic";
+    const saved = (window.localStorage.getItem("bmp_chat_provider") as ChatProvider) || DEFAULT_PROVIDER;
     setProvider(saved);
     const key = window.localStorage.getItem(providerKeyStore(saved)) || "";
     setApiKey(key);
@@ -153,7 +158,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   const loadModels = async () => {
     const key = apiKeyRef.current.trim();
-    if (!key) {
+    if (providerNeedsKey(provider) && !key) {
       setError("모델을 불러오려면 먼저 API 키를 입력하세요.");
       return;
     }
@@ -172,7 +177,12 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   // Auto-load models when the widget opens or the provider changes, if a key is
   // already present. (Not keyed on apiKey, to avoid refetching on every keystroke.)
   useEffect(() => {
-    if (isOpen && apiKeyRef.current.trim() && models.length === 0 && !modelsLoading) {
+    if (
+      isOpen &&
+      (!providerNeedsKey(provider) || apiKeyRef.current.trim()) &&
+      models.length === 0 &&
+      !modelsLoading
+    ) {
       void loadModels();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -287,7 +297,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const handleSend = async () => {
     const text = input.trim();
     if (!text) return;
-    if (!apiKey.trim()) {
+    if (providerNeedsKey(provider) && !apiKey.trim()) {
       setError("먼저 API 키를 입력하세요.");
       return;
     }
@@ -411,13 +421,19 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
                   </option>
                 ))}
               </select>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => handleKeyChange(e.target.value)}
-                placeholder="API 키 (브라우저에만 저장)"
-                className="flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-xs"
-              />
+              {providerNeedsKey(provider) ? (
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => handleKeyChange(e.target.value)}
+                  placeholder="API 키 (브라우저에만 저장)"
+                  className="flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-xs"
+                />
+              ) : (
+                <span className="flex flex-1 items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                  키 불필요 · 자체 호스팅 모델
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-2">

@@ -82,7 +82,120 @@ def test_get_provider_known_and_unknown():
     assert get_provider("anthropic") is not None
     assert get_provider("openai") is not None
     assert get_provider("gemini") is not None
+    assert get_provider("exaone") is not None
     assert get_provider("bogus") is None
+
+
+# ---- EXAONE (self-hosted local LLM) adapter -------------------------------
+
+def test_get_provider_exaone_alias_local():
+    from app.chat.providers import ExaoneProvider
+
+    assert isinstance(get_provider("exaone"), ExaoneProvider)
+    # "local" is a friendly alias for the same provider.
+    assert isinstance(get_provider("local"), ExaoneProvider)
+    assert isinstance(get_provider("EXAONE"), ExaoneProvider)
+
+
+def test_exaone_requires_no_api_key():
+    from app.chat.providers import ExaoneProvider
+
+    p = ExaoneProvider()
+    assert p.requires_api_key is False
+    # The default model is the configured served EXAONE id.
+    from app.config import get_settings
+
+    assert p.default_model == get_settings().local_llm_model
+
+
+def test_exaone_list_models_hits_local_endpoint_without_key(monkeypatch):
+    from app.chat import providers
+
+    captured: dict = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "LGAI-EXAONE/EXAONE-4.5-33B-AWQ"}]}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        return FakeResp()
+
+    monkeypatch.setattr(providers.httpx, "get", fake_get)
+    models_out = providers.ExaoneProvider().list_models("")
+    assert models_out == ["LGAI-EXAONE/EXAONE-4.5-33B-AWQ"]
+    assert captured["url"].endswith("/v1/models")
+    # No Authorization header on the local path.
+    assert not (captured["headers"] or {}).get("Authorization")
+
+
+def test_exaone_request_no_auth_header_and_parses_tool_calls(monkeypatch):
+    from app.chat import providers
+
+    captured: dict = {}
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {"name": "list_models", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        captured["json"] = kwargs.get("json")
+        return FakeResp()
+
+    monkeypatch.setattr(providers.httpx, "post", fake_post)
+    p = providers.ExaoneProvider()
+    resp = p.request("", p.default_model, "sys", [{"role": "user", "content": "hi"}], [])
+    parsed = p.parse(resp)
+
+    # Routed to the local /chat/completions endpoint, no Authorization header.
+    assert captured["url"].endswith("/v1/chat/completions")
+    assert "Authorization" not in (captured["headers"] or {})
+    # Standard OpenAI tool_calls are parsed.
+    assert parsed.stop == "tool_calls"
+    assert parsed.tool_calls == [{"id": "call_1", "name": "list_models", "arguments": {}}]
+
+
+def test_exaone_strips_think_from_reply():
+    from app.chat.providers import ExaoneProvider
+
+    resp = {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": "<think>let me reason about this</think>Here is the answer.",
+                    "tool_calls": [],
+                },
+            }
+        ]
+    }
+    parsed = ExaoneProvider().parse(resp)
+    assert parsed.text == "Here is the answer."
+    assert parsed.tool_calls == []
 
 
 # ---- Loop (provider-agnostic) ---------------------------------------------
@@ -206,6 +319,78 @@ def test_run_chat_injects_attachments_into_run_model(monkeypatch):
         # LLM's own name-only entry is echoed back).
         recorded = out["tool_calls"][0]["arguments"]
         assert all("base64" not in f for f in recorded.get("files", []))
+
+
+# ---- /api/chat endpoint: api_key validation per provider ------------------
+
+def _api_client(user):
+    from fastapi.testclient import TestClient
+    from app.auth import get_current_user
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    return TestClient(app), app
+
+
+def test_chat_endpoint_allows_empty_key_for_exaone(monkeypatch):
+    """provider=exaone must NOT require an api_key; keyed providers still do."""
+    from app.chat import providers
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"finish_reason": "stop",
+                                 "message": {"content": "안녕하세요.", "tool_calls": []}}]}
+
+    monkeypatch.setattr(providers.httpx, "post", lambda url, **k: FakeResp())
+
+    with SessionLocal() as db:
+        user = _user(db)
+    client, app = _api_client(user)
+    try:
+        # Empty api_key + exaone → allowed (reaches the model, returns a reply).
+        r = client.post("/api/chat", json={"provider": "exaone", "api_key": "",
+                                           "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200, r.text
+        assert r.json()["reply"] == "안녕하세요."
+
+        # A keyed provider with an empty key is still rejected (400).
+        r2 = client.post("/api/chat", json={"provider": "openai", "api_key": "",
+                                            "messages": [{"role": "user", "content": "hi"}]})
+        assert r2.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_chat_models_endpoint_allows_empty_key_for_exaone(monkeypatch):
+    from app.chat import providers
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "LGAI-EXAONE/EXAONE-4.5-33B-AWQ"}]}
+
+    monkeypatch.setattr(providers.httpx, "get", lambda url, **k: FakeResp())
+
+    with SessionLocal() as db:
+        user = _user(db)
+    client, app = _api_client(user)
+    try:
+        r = client.post("/api/chat/models", json={"provider": "exaone", "api_key": ""})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["models"] == ["LGAI-EXAONE/EXAONE-4.5-33B-AWQ"]
+        assert body["default"] == "LGAI-EXAONE/EXAONE-4.5-33B-AWQ"
+
+        # Keyed provider without a key is still rejected.
+        r2 = client.post("/api/chat/models", json={"provider": "openai", "api_key": ""})
+        assert r2.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_run_chat_hits_iteration_cap():

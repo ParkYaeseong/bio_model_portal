@@ -60,7 +60,7 @@ def list_models(
     if provider is None:
         raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
     api_key = (payload.api_key or "").strip()
-    if not api_key:
+    if provider.requires_api_key and not api_key:
         raise HTTPException(status_code=400, detail="API key is required.")
     try:
         available = provider.list_models(api_key)
@@ -79,7 +79,7 @@ def chat(
     if provider is None:
         raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
     api_key = (payload.api_key or "").strip()
-    if not api_key:
+    if provider.requires_api_key and not api_key:
         raise HTTPException(status_code=400, detail="API key is required.")
     history = [{"role": m.role, "content": m.content} for m in payload.messages]
     if not any(m["role"] == "user" and m["content"].strip() for m in history):
