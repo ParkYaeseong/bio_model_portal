@@ -94,11 +94,20 @@ def test_colabfold_fasta_upload_monomer_single_record():
     assert ":" not in out["sequence"]
 
 
-def test_esmfold_fasta_upload_becomes_inline_sequence():
-    archive = _uploaded_fasta_archive(b">A\nMKTAYIAKQR\n>B\nGGGSGGGS\n")
+def test_esmfold_fasta_upload_monomer_single_record():
+    # ESMFold is single-chain; a one-record FASTA folds as a monomer.
+    archive = _uploaded_fasta_archive(b">only\nMKTAYIAKQR\n")
     out = sequence.build_folding_input({"input_archive": archive}, model="ESMFold")
-    assert out["sequence"] == "MKTAYIAKQR:GGGSGGGS"
+    assert out["sequence"] == "MKTAYIAKQR"
     assert "input_archive" not in out
+
+
+def test_esmfold_fasta_upload_multimer_rejected():
+    # The ESMFold worker (facebook/esmfold_v1) can't fold a ':'-joined complex —
+    # it must be rejected here, not sent to the worker (which 500s on the colon).
+    archive = _uploaded_fasta_archive(b">A\nMKTAYIAKQR\n>B\nGGGSGGGS\n")
+    with pytest.raises(ValueError):
+        sequence.build_folding_input({"input_archive": archive}, model="ESMFold")
 
 
 def test_folding_headerless_fasta_is_one_bare_sequence():

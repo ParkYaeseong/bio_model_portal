@@ -89,21 +89,16 @@ def _parse_fasta_sequences(text: str) -> list[str]:
     return [r.strip().upper() for r in records if r.strip()]
 
 
-def sequence_from_fasta_archive(payload: dict) -> str:
-    """Build a folding-input sequence from an uploaded FASTA.
-
-    ESMFold/ColabFold take an inline sequence, not a FASTA file. Recover it so a
-    FASTA upload (the format the UI explicitly invites) reaches the worker: a
-    single record folds as a monomer; two or more are joined with ':' so the
-    model auto-detects the multimer (ColabFold runs alphafold2_multimer_v3;
-    facebook/esmfold_v1 inserts a chain break)."""
+def sequences_from_fasta_archive(payload: dict) -> list[str]:
+    """Return the per-chain sequences from an uploaded FASTA archive (empty if
+    none). ESMFold/ColabFold take an inline sequence, not a FASTA file — the
+    caller turns this list into the worker-appropriate inline form."""
     from . import structure
 
     fasta_text = structure.extract_fasta_text(payload)
     if not fasta_text:
-        return ""
-    seqs = _parse_fasta_sequences(fasta_text)
-    return ":".join(seqs) if seqs else ""
+        return []
+    return _parse_fasta_sequences(fasta_text)
 
 
 def build_folding_input(payload: dict, *, model: str) -> dict:
@@ -124,16 +119,25 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
             # through instead of failing / dropping it.
             return out
         else:
-            fasta_seq = sequence_from_fasta_archive(out)
-            if fasta_seq:
-                # ESMFold/ColabFold consume an inline sequence, not a FASTA file.
-                # One record => monomer; many => ':'-joined so the model
-                # auto-detects the multimer.
-                out["sequence"] = fasta_seq
-            else:
+            fasta_seqs = sequences_from_fasta_archive(out)
+            if not fasta_seqs:
                 raise ValueError(
                     f"{model} requires a protein sequence — type one or upload a FASTA/PDB."
                 )
+            if len(fasta_seqs) == 1:
+                # Single record => monomer (works for both ESMFold and ColabFold).
+                out["sequence"] = fasta_seqs[0]
+            elif model == "ESMFold":
+                # This ESMFold worker (facebook/esmfold_v1) folds a single chain;
+                # a ':'-joined sequence crashes its tokenizer. Multimers must go
+                # to ColabFold/AlphaFold2.
+                raise ValueError(
+                    "ESMFold는 단일 체인 구조만 예측합니다. 멀티머(복합체)는 "
+                    "ColabFold 또는 AlphaFold2를 사용하세요."
+                )
+            else:
+                # ColabFold: ':'-joined chains => auto-runs the multimer model.
+                out["sequence"] = ":".join(fasta_seqs)
     # ColabFold has known, worker-accepted knobs; pin their defaults. ESMFold and
     # AlphaFold2 are left untouched (worker param names unverified / UI-required).
     if model == "ColabFold":
