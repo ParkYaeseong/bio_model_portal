@@ -77,6 +77,12 @@ export async function login(username: string, password: string) {
   return response.json();
 }
 
+export type Me = { id: number; username: string; created_at: string };
+// Identify the logged-in SSO user so browser-local chat state (conversations,
+// API keys, model choice) can be namespaced per user — a shared browser must
+// never expose one user's data to the next.
+export const getMe = (token?: string) => apiFetch<Me>("/api/users/me", token);
+
 export const fetchPipelines = (token: string) => apiFetch<PipelineResponse>("/api/pipelines", token);
 export const fetchJobs = (token: string) => apiFetch<JobResponse[]>("/api/jobs", token);
 export const fetchJob = (jobId: string, token: string) => apiFetch<JobResponse>(`/api/jobs/${jobId}`, token);

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import {
   chatWithModels,
   fetchInsights,
+  getMe,
   listChatModels,
   ChatProvider,
   ChatToolCall,
@@ -46,16 +47,21 @@ const DEFAULT_PROVIDER: ChatProvider = "exaone";
 const providerNeedsKey = (provider: ChatProvider) => provider !== "exaone";
 
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024; // 40 MB total across attachments
-const CONV_KEY = "bmp_chat_conversations";
 const MAX_CONVERSATIONS = 30;
 
-const providerKeyStore = (provider: ChatProvider) => `bmp_chat_key_${provider}`;
-const providerModelStore = (provider: ChatProvider) => `bmp_chat_model_${provider}`;
+// All chat state lives in the browser's localStorage, so on a shared machine it
+// must be scoped to the logged-in user (`ns` = username). Without this, the next
+// SSO user on the same browser would see the previous user's conversations, API
+// keys, and model choice.
+const convKey = (ns: string) => `bmp_chat_conversations_${ns}`;
+const providerStore = (ns: string) => `bmp_chat_provider_${ns}`;
+const providerKeyStore = (ns: string, provider: ChatProvider) => `bmp_chat_key_${ns}_${provider}`;
+const providerModelStore = (ns: string, provider: ChatProvider) => `bmp_chat_model_${ns}_${provider}`;
 
-const loadConversations = (): Conversation[] => {
+const loadConversations = (ns: string): Conversation[] => {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(CONV_KEY);
+    const raw = window.localStorage.getItem(convKey(ns));
     const parsed = raw ? (JSON.parse(raw) as Conversation[]) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -63,10 +69,10 @@ const loadConversations = (): Conversation[] => {
   }
 };
 
-const persistConversations = (convs: Conversation[]) => {
+const persistConversations = (convs: Conversation[], ns: string) => {
   if (typeof window === "undefined") return;
   const trimmed = [...convs].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVERSATIONS);
-  window.localStorage.setItem(CONV_KEY, JSON.stringify(trimmed));
+  window.localStorage.setItem(convKey(ns), JSON.stringify(trimmed));
 };
 
 const newId = () =>
@@ -123,6 +129,24 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Per-user namespace for all browser-local chat state. Null until /me resolves;
+  // while null we neither read nor write localStorage, so nothing leaks across
+  // users on a shared browser.
+  const [ns, setNs] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getMe(token)
+      .then((me) => {
+        if (!cancelled) setNs(me.username || `id-${me.id}`);
+      })
+      .catch(() => {
+        /* leave ns null — degraded (no persistence) rather than shared */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   // Conversation persistence (browser-only; never sent to our DB).
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showConvList, setShowConvList] = useState(false);
@@ -135,27 +159,28 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
-  // Load persisted provider + key + model + conversations from the browser.
+  // Load persisted provider + key + model + conversations from the browser,
+  // once we know which user's namespace to read.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = (window.localStorage.getItem("bmp_chat_provider") as ChatProvider) || DEFAULT_PROVIDER;
+    if (typeof window === "undefined" || !ns) return;
+    const saved = (window.localStorage.getItem(providerStore(ns)) as ChatProvider) || DEFAULT_PROVIDER;
     setProvider(saved);
-    const key = window.localStorage.getItem(providerKeyStore(saved)) || "";
+    const key = window.localStorage.getItem(providerKeyStore(ns, saved)) || "";
     setApiKey(key);
     apiKeyRef.current = key;
-    setModel(window.localStorage.getItem(providerModelStore(saved)) || "");
-    setConversations(loadConversations());
-  }, []);
+    setModel(window.localStorage.getItem(providerModelStore(ns, saved)) || "");
+    setConversations(loadConversations(ns));
+  }, [ns]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("bmp_chat_provider", provider);
-    const key = window.localStorage.getItem(providerKeyStore(provider)) || "";
+    if (typeof window === "undefined" || !ns) return;
+    window.localStorage.setItem(providerStore(ns), provider);
+    const key = window.localStorage.getItem(providerKeyStore(ns, provider)) || "";
     setApiKey(key);
     apiKeyRef.current = key;
-    setModel(window.localStorage.getItem(providerModelStore(provider)) || "");
+    setModel(window.localStorage.getItem(providerModelStore(ns, provider)) || "");
     setModels([]); // provider changed — clear the stale list
-  }, [provider]);
+  }, [provider, ns]);
 
   const loadModels = async () => {
     const key = apiKeyRef.current.trim();
@@ -191,7 +216,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
 
   const handleModelChange = (value: string) => {
     setModel(value);
-    if (typeof window !== "undefined") window.localStorage.setItem(providerModelStore(provider), value);
+    if (typeof window !== "undefined" && ns) window.localStorage.setItem(providerModelStore(ns, provider), value);
   };
 
   useEffect(() => {
@@ -215,7 +240,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const handleKeyChange = (value: string) => {
     setApiKey(value);
     apiKeyRef.current = value;
-    if (typeof window !== "undefined") window.localStorage.setItem(providerKeyStore(provider), value);
+    if (typeof window !== "undefined" && ns) window.localStorage.setItem(providerKeyStore(ns, provider), value);
   };
 
   const contextJob = useMemo(() => jobs?.find((j) => j.id === contextJobId), [jobs, contextJobId]);
@@ -228,7 +253,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
     setConversations((prev) => {
       const others = prev.filter((c) => c.id !== id);
       const next = [{ id, title, messages: msgs, updatedAt: Date.now() }, ...others];
-      persistConversations(next);
+      if (ns) persistConversations(next, ns);
       return next;
     });
   };
@@ -252,7 +277,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
   const deleteConversation = (id: string) => {
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== id);
-      persistConversations(next);
+      if (ns) persistConversations(next, ns);
       return next;
     });
     if (activeConvId === id) startNewChat();
@@ -263,7 +288,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
       return;
     }
     setConversations([]);
-    persistConversations([]);
+    if (ns) persistConversations([], ns);
     setShowConvList(false);
     startNewChat();
   };
