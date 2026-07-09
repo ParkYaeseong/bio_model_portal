@@ -91,3 +91,22 @@ def test_average_durations_requires_min_samples():
         _mk_job(db, u.id, pipeline=pipe2, endpoint="e", status="completed",
                 created=c, updated=c + timedelta(seconds=50))
         assert pipe2 not in qe.average_durations(db)  # only 1 sample
+
+
+def test_list_jobs_endpoint_serializes_active_job():
+    # Exercises the REAL endpoint (ORM -> JobRead -> JSON). This is the path that
+    # 500'd in prod (from_orm on Pydantic v2); a pure-function test missed it.
+    Base.metadata.create_all(bind=engine)
+    from app.routers import jobs as jobs_router
+    from app.schemas import JobRead
+    with SessionLocal() as db:
+        u = models.User(username="qe_list_user", password_hash="x")
+        db.add(u); db.commit()
+        _mk_job(db, u.id, pipeline="alphafold", endpoint="ep-list-test",
+                status="in_progress", created=datetime(2026, 3, 1))
+        result = jobs_router.list_jobs(db=db, current_user=u)
+        assert len(result) == 1
+        item = result[0]
+        assert isinstance(item, JobRead)
+        item.model_dump_json()  # must serialize without error
+        assert item.queue_position is not None  # active job carries an estimate
