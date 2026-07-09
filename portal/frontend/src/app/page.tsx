@@ -102,6 +102,59 @@ function acceptedFiles(pipeline: PipelineMeta): { accept: string; hint: string }
   return { accept: ".pdb,.cif,.mmcif,.zip", hint: "PDB · CIF" };
 }
 
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}초`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}분`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}시간 ${rm}분` : `${h}시간`;
+}
+
+const RUNNING_STATUSES = new Set(["running", "in_progress", "processing"]);
+const QUEUED_STATUSES = new Set(["pending", "submitted", "queued", "in_queue"]);
+
+// Rough progress + queue position for an active job. All values are estimates
+// (workers report no true percentage); the copy says "~" / "대략" accordingly.
+function JobProgress({ job }: { job: JobResponse }) {
+  const status = (job.status || "").toLowerCase();
+  const running = RUNNING_STATUSES.has(status);
+  const queued = QUEUED_STATUSES.has(status);
+  if (!running && !queued) return null;
+
+  const avg = job.avg_seconds ?? null;
+  const elapsed = job.elapsed_seconds ?? 0;
+  const eta = job.eta_seconds ?? null;
+  const ahead = job.queue_position ?? 0;
+
+  const pct = running && avg ? Math.min(95, Math.round((elapsed / avg) * 100)) : queued ? 6 : 0;
+
+  const parts: string[] = [];
+  if (queued) {
+    parts.push(ahead > 0 ? `앞에 ${ahead}개 대기` : "대기 중");
+    if (eta != null && avg != null) {
+      parts.push(`예상 시작 ~${formatDuration(Math.max(0, eta - avg))} · 총 ~${formatDuration(eta)}`);
+    }
+  } else {
+    parts.push(`경과 ${formatDuration(elapsed)}`);
+    if (eta != null) parts.push(`예상 ~${formatDuration(eta)} 남음`);
+  }
+  if (avg == null) parts.push("예상시간 정보 부족");
+
+  return (
+    <div className="mt-2">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full ${running ? "bg-brand-500" : `bg-amber-400 ${"animate-pulse"}`}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">{parts.join(" · ")}</p>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [sessionExpired, setSessionExpired] = useState(false);
 
@@ -1271,6 +1324,7 @@ function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete
               </div>
               <JobStatusBadge status={job.status} />
             </div>
+            <JobProgress job={job} />
             <div className="mt-3 flex gap-2 text-xs text-slate-500">
               <button className="rounded-full border border-slate-200 px-3 py-1" onClick={() => onSelect(job.id)}>
                 상세보기

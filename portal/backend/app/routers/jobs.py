@@ -5,6 +5,7 @@ import copy
 import csv
 import io
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List
 
@@ -13,7 +14,7 @@ import httpx
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, queue_estimate
 from ..auth import get_current_user
 from ..database import get_db
 from ..runpod import PIPELINES, RunpodClient, build_pipeline_payload, pipeline_endpoint
@@ -36,7 +37,21 @@ def list_jobs(db: Session = Depends(get_db), current_user: models.User = Depends
         .order_by(models.Job.created_at.desc())
         .all()
     )
-    return jobs
+    # Attach a rough queue-position + ETA to any still-active job. Queue position
+    # counts other users' jobs ahead on the same endpoint (number only).
+    avgs = queue_estimate.average_durations(db)
+    now = datetime.utcnow()
+    out: list[JobRead] = []
+    for job in jobs:
+        read = JobRead.from_orm(job)
+        est = queue_estimate.estimate_for_job(db, job, avgs, now)
+        if est:
+            read.queue_position = est.get("queue_position")
+            read.eta_seconds = est.get("eta_seconds")
+            read.avg_seconds = est.get("avg_seconds")
+            read.elapsed_seconds = est.get("elapsed_seconds")
+        out.append(read)
+    return out
 
 
 @router.get("/{job_id}", response_model=JobRead)

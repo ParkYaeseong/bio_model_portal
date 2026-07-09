@@ -62,6 +62,12 @@ class JobRead(JobBase):
     updated_at: datetime
     expires_at: datetime
     artifacts: list[ArtifactRead] = []
+    # Rough progress/queue estimate, only set while a job is active. All values
+    # are approximate — workers report no true percentage. See queue_estimate.py.
+    queue_position: int | None = None
+    eta_seconds: int | None = None
+    avg_seconds: int | None = None
+    elapsed_seconds: int | None = None
 
     class Config:
         orm_mode = True

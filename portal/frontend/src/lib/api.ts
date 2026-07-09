@@ -192,6 +192,11 @@ export interface JobResponse {
   preferred_download_dir?: string | null;
   parameters: Record<string, unknown>;
   artifacts: ArtifactMeta[];
+  // Rough queue/progress estimate, present only while the job is active.
+  queue_position?: number | null;
+  eta_seconds?: number | null;
+  avg_seconds?: number | null;
+  elapsed_seconds?: number | null;
 }
 
 export type AssistantRequest = {
