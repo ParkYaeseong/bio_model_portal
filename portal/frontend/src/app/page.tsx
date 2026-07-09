@@ -16,6 +16,7 @@ import {
   fetchContigSuggestions,
   createJob,
   deleteJob,
+  cancelJob,
   downloadArchive,
   downloadArtifact,
   fetchSelfimproveAdmin,
@@ -130,14 +131,17 @@ function JobProgress({ job }: { job: JobResponse }) {
 
   const pct = running && avg ? Math.min(95, Math.round((elapsed / avg) * 100)) : queued ? 6 : 0;
 
+  // "앞에 N개" = other jobs (all users) still ahead on the same model endpoint.
+  const aheadLabel = ahead > 0 ? `앞에 ${ahead}개` : null;
   const parts: string[] = [];
   if (queued) {
-    parts.push(ahead > 0 ? `앞에 ${ahead}개 대기` : "대기 중");
+    parts.push(aheadLabel ? `${aheadLabel} 대기` : "대기 중");
     if (eta != null && avg != null) {
       parts.push(`예상 시작 ~${formatDuration(Math.max(0, eta - avg))} · 총 ~${formatDuration(eta)}`);
     }
   } else {
     parts.push(`경과 ${formatDuration(elapsed)}`);
+    if (aheadLabel) parts.push(aheadLabel);
     if (eta != null) parts.push(`예상 ~${formatDuration(eta)} 남음`);
   }
   if (avg == null) parts.push("예상시간 정보 부족");
@@ -556,7 +560,7 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
   };
 
   const handleDelete = async (jobId: string) => {
-    if (!confirm("정말 삭제하시겠습니까?")) return;
+    if (!confirm("삭제하시겠습니까? 아직 실행 중이면 연산을 정지한 뒤 삭제합니다.")) return;
     try {
       await deleteJob(jobId, token);
     } catch (error) {
@@ -565,6 +569,17 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
     }
     if (jobId === selectedJobId) {
       setSelectedJobId(null);
+    }
+    await refreshJobs();
+  };
+
+  const handleCancel = async (jobId: string) => {
+    if (!confirm("실행 중인 작업을 정지할까요? 진행 중인 연산이 취소됩니다.")) return;
+    try {
+      await cancelJob(jobId, token);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
     }
     await refreshJobs();
   };
@@ -657,6 +672,7 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
               selectedJobId={selectedJob?.id}
               onDownload={handleDownload}
               onDelete={handleDelete}
+              onCancel={handleCancel}
             />
             {selectedJob && (
               <ResultPanel job={selectedJob} token={token} onArtifactDownload={handleArtifactDownload} />)
@@ -1300,9 +1316,14 @@ type JobTableProps = {
   onSelect: (id: string) => void;
   onDownload: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
 };
 
-function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete }: JobTableProps) {
+const CANCELLABLE_STATUSES = new Set([
+  "pending", "submitted", "queued", "in_queue", "running", "in_progress", "processing",
+]);
+
+function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete, onCancel }: JobTableProps) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
@@ -1329,6 +1350,14 @@ function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete
               <button className="rounded-full border border-slate-200 px-3 py-1" onClick={() => onSelect(job.id)}>
                 상세보기
               </button>
+              {CANCELLABLE_STATUSES.has((job.status || "").toLowerCase()) && (
+                <button
+                  className="rounded-full border border-amber-300 px-3 py-1 font-semibold text-amber-600"
+                  onClick={() => void onCancel(job.id)}
+                >
+                  정지
+                </button>
+              )}
               <button className="rounded-full border border-slate-200 px-3 py-1" onClick={() => void onDownload(job.id)}>
                 결과 다운로드
               </button>

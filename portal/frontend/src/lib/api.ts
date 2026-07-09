@@ -91,6 +91,9 @@ export async function createJob(form: FormData, token: string) {
 export const deleteJob = (jobId: string, token: string) =>
   apiFetch(`/api/jobs/${jobId}`, token, { method: "DELETE" });
 
+export const cancelJob = (jobId: string, token: string) =>
+  apiFetch<JobResponse>(`/api/jobs/${jobId}/cancel`, token, { method: "POST" });
+
 export async function downloadArtifact(jobId: string, artifactId: string, token: string) {
   const response = await fetch(`${API_BASE}/api/jobs/${jobId}/artifacts/${artifactId}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,

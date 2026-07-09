@@ -213,9 +213,39 @@ def download_archive(job_id: str, db: Session = Depends(get_db), current_user: m
     return FileResponse(job.result_archive, filename=Path(job.result_archive).name)
 
 
+def _cancel_active_job(job: models.Job) -> bool:
+    """Best-effort stop of a still-running job's actual compute (RunPod/worker
+    via the gateway) and mark it cancelled locally. Returns True if it was
+    active. Never raises — the local state is updated even if the remote call
+    fails, so the job leaves the active set either way."""
+    if (job.status or "").lower() not in queue_estimate.ACTIVE_STATUSES:
+        return False
+    if job.endpoint_id and job.runpod_job_id:
+        try:
+            RunpodClient().cancel(job.endpoint_id, job.runpod_job_id)
+        except Exception:  # noqa: BLE001 — best-effort; still cancel locally
+            pass
+    job.status = "cancelled"
+    job.error_message = "사용자가 정지함"
+    return True
+
+
+@router.post("/{job_id}/cancel", response_model=JobRead)
+def cancel_job(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    job = _get_job_or_404(db, current_user.id, job_id)
+    _cancel_active_job(job)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.delete("/{job_id}")
 def delete_job(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     job = _get_job_or_404(db, current_user.id, job_id)
+    # Deleting an active job must stop its compute first, or it keeps running on
+    # the GPU untracked.
+    _cancel_active_job(job)
     if job.result_dir:
         remove_tree(Path(job.result_dir))
     if job.input_archive_path:

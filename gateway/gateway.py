@@ -479,18 +479,31 @@ def cancel(
             raise HTTPException(404, f"unknown job {job_id}")
         if job["status"] in {"COMPLETED", "FAILED"}:
             return {"id": job_id, "status": job["status"]}
-        worker_url = ENDPOINTS[endpoint_id]["worker_url"]
-    # RunPod jobs are polled in a background thread; we don't track the remote
-    # RunPod job id here, so cancel is best-effort local-only for those.
-    if worker_url:
+        worker_url = ENDPOINTS.get(endpoint_id, {}).get("worker_url") or ""
+        runpod_id = job.get("runpod_id") or ""
+        rp_job = job.get("rp_job") or ""
+    # Best-effort stop the ACTUAL compute so cancel frees the GPU, not just the
+    # local record. RunPod job id is now persisted (see _run_job), so a RunPod
+    # passthrough job can be cancelled remotely; local workers get /cancel.
+    if runpod_id and rp_job and RUNPOD_API_KEY:
+        try:
+            with httpx.Client(timeout=10) as client:
+                client.post(
+                    f"{RUNPOD_API_BASE}/{runpod_id}/cancel/{rp_job}",
+                    headers={"Authorization": f"Bearer {RUNPOD_API_KEY}"},
+                )
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("runpod cancel failed for %s (rp=%s): %s", job_id, rp_job, exc)
+    elif worker_url:
         try:
             with httpx.Client(timeout=10) as client:
                 client.post(f"{worker_url}/cancel", json={"id": job_id})
         except Exception as exc:  # noqa: BLE001
             LOG.warning("worker cancel call failed for %s: %s", job_id, exc)
     with JOBS_LOCK:
-        if JOBS[job_id]["status"] not in {"COMPLETED", "FAILED"}:
+        if job_id in JOBS and JOBS[job_id]["status"] not in {"COMPLETED", "FAILED"}:
             JOBS[job_id]["status"] = "FAILED"
             JOBS[job_id]["error"] = "cancelled by user"
             JOBS[job_id]["completed_at"] = time.time()
+        _save_jobs()
     return {"id": job_id, "status": "FAILED"}

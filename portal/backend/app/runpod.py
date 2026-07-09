@@ -375,6 +375,13 @@ class RunpodClient:
         response.raise_for_status()
         return response.json()
 
+    def cancel(self, endpoint_id: str, job_id: str) -> Dict[str, Any]:
+        url = f"{RUNPOD_BASE}/{endpoint_id}/cancel/{job_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        response = self.http.post(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
 
 def pipeline_endpoint(key: str) -> str:
     pipeline = PIPELINES[key]
