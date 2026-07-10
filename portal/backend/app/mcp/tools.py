@@ -44,6 +44,36 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
     return {"ok": True, "job_id": job.id, "status": job.status, "endpoint_id": job.endpoint_id}
 
 
+def run_chain(db: Session, user: models.User, arguments: dict) -> dict:
+    steps = arguments.get("steps") or []
+    if not steps:
+        return {"ok": False, "error": "steps is required (at least one step)"}
+    for s in steps:
+        p = str((s or {}).get("pipeline") or "")
+        if p not in PIPELINES:
+            return {"ok": False, "error": f"unknown pipeline '{p}'. valid: {sorted(PIPELINES)}"}
+    first = steps[0]
+    try:
+        job = chaining_exec.submit_chained(
+            db, user,
+            pipeline=str(first.get("pipeline")),
+            params=first.get("parameters") or {},
+            sequence=arguments.get("sequence"),
+            files=arguments.get("files"),
+            from_job_id=first.get("from_job_id"),
+            source_artifact_ids=first.get("source_artifact_ids"),
+        )
+    except (ValueError, chaining.ChainError) as exc:
+        return {"ok": False, "error": str(exc)}
+    rest = steps[1:]
+    if rest:
+        db.add(models.PendingChain(
+            user_id=user.id, source_job_id=job.id, steps=rest, status="pending"))
+        db.commit()
+    return {"ok": True, "first_job_id": job.id, "first_status": job.status,
+            "queued": [str(s.get("pipeline")) for s in rest]}
+
+
 def job_status(db: Session, user: models.User, arguments: dict) -> dict:
     job = _owned_job(db, user, arguments.get("job_id"))
     if not job:
@@ -94,6 +124,25 @@ TOOLS = {
             "files": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "base64": {"type": "string"}}}},
         },
         "required": ["pipeline"],
+    }),
+    "run_chain": (run_chain,
+        "Run an ordered multi-step chain in one call (e.g. rfdiffusion then proteinmpnn "
+        "then colabfold then diffdock). Step 1 runs immediately from the user's attached "
+        "input/sequence; each later step runs AUTOMATICALLY when its predecessor finishes, "
+        "feeding the predecessor's output in. Use this when the user asks to do several "
+        "models in sequence in one message. A queued (non-first) step that needs an extra "
+        "uploaded file (e.g. a DiffDock SDF ligand) is not supported — use a SMILES ligand "
+        "in that step's parameters, or run it separately. After calling, tell the user step 1 "
+        "started and which steps are queued.", {
+        "type": "object",
+        "properties": {
+            "steps": {"type": "array", "items": {"type": "object", "properties": {
+                "pipeline": {"type": "string"},
+                "parameters": {"type": "object"},
+            }, "required": ["pipeline"]}},
+            "sequence": {"type": "string"},
+        },
+        "required": ["steps"],
     }),
     "job_status": (job_status, "Get a job's status.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
     "job_result": (job_result, "Get a job's artifacts + metrics for explaining results.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),

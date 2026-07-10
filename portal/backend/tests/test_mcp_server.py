@@ -33,7 +33,7 @@ def test_initialize_and_tools_list():
     assert _rpc(client, raw, "initialize").json()["result"]["serverInfo"]["name"] == "bio-model-portal"
     tools = _rpc(client, raw, "tools/list").json()["result"]["tools"]
     names = {t["name"] for t in tools}
-    assert {"list_models", "run_model", "job_status", "job_result", "cancel_job"} == names
+    assert {"list_models", "run_model", "run_chain", "job_status", "job_result", "cancel_job"} == names
     assert all("inputSchema" in t for t in tools)
 
 

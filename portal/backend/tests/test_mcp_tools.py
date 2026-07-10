@@ -144,3 +144,35 @@ def test_run_model_chain_no_structure_artifacts(monkeypatch, tmp_path):
         src = _finished_job(db, u, "rfdiffusion", [("stdout.log", log, "log")])
         r = tools.run_model(db, u, {"pipeline": "diffdock", "from_job_id": src.id})
         assert r["ok"] is False and "no structure artifacts" in r["error"].lower()
+
+
+def test_run_chain_submits_first_and_queues_rest(monkeypatch):
+    with SessionLocal() as db:
+        u = _user(db)
+        captured = {}; _capture_create(monkeypatch, captured)
+        r = tools.run_chain(db, u, {
+            "steps": [{"pipeline": "rfdiffusion", "parameters": {}},
+                      {"pipeline": "proteinmpnn", "parameters": {}}],
+            "sequence": "ACDEF",
+        })
+        assert r["ok"] is True and r["first_job_id"]
+        assert r["queued"] == ["proteinmpnn"]
+        chains = db.query(models.PendingChain).filter_by(source_job_id=r["first_job_id"]).all()
+        assert len(chains) == 1
+        assert chains[0].steps == [{"pipeline": "proteinmpnn", "parameters": {}}]
+
+
+def test_run_chain_single_step_creates_no_pending(monkeypatch):
+    with SessionLocal() as db:
+        u = _user(db)
+        captured = {}; _capture_create(monkeypatch, captured)
+        r = tools.run_chain(db, u, {"steps": [{"pipeline": "esmfold"}], "sequence": "ACDEF"})
+        assert r["ok"] is True and r["queued"] == []
+        assert db.query(models.PendingChain).filter_by(source_job_id=r["first_job_id"]).count() == 0
+
+
+def test_run_chain_unknown_pipeline_errors(monkeypatch):
+    with SessionLocal() as db:
+        u = _user(db)
+        r = tools.run_chain(db, u, {"steps": [{"pipeline": "nope"}]})
+        assert r["ok"] is False and "unknown pipeline" in r["error"].lower()
