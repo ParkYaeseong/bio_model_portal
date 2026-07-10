@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..runpod import PIPELINES
 from ..workflow import job_bridge
+from .. import chaining
 
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB per file
+_ACTIVE_STATUSES = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
 
 
 def _field(f) -> dict:
@@ -41,6 +43,9 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
         return {"ok": False, "error": f"unknown pipeline '{pipeline}'. valid: {sorted(PIPELINES)}"}
     params = arguments.get("parameters") or {}
     sequence = arguments.get("sequence")
+    from_job_id = arguments.get("from_job_id")
+    source_artifact_ids = arguments.get("source_artifact_ids")
+
     input_files: list[Path] = []
     tmp: Path | None = None
     try:
@@ -59,6 +64,30 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
             dest = tmp / (safe or "input")
             dest.write_bytes(data)
             input_files.append(dest)
+
+        if from_job_id or source_artifact_ids:
+            if not from_job_id:
+                return {"ok": False, "error": "from_job_id is required when source_artifact_ids is set"}
+            src = _owned_job(db, user, from_job_id)
+            if not src:
+                return {"ok": False, "error": "source job not found"}
+            if (src.status or "").lower() in _ACTIVE_STATUSES:
+                return {"ok": False, "error": f"source job {src.id} is not finished (status={src.status})"}
+            try:
+                plan = chaining.plan_chain(db, src, pipeline, source_artifact_ids)
+            except chaining.ChainError as exc:
+                return {"ok": False, "error": str(exc)}
+            if plan.delivery == "sequence":
+                if not (sequence and str(sequence).strip()):
+                    sequence = plan.sequence
+            else:
+                tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_chain_"))
+                for artifact in plan.artifacts:
+                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(artifact.file_name).name) or "input"
+                    dest = tmp / safe
+                    dest.write_bytes(Path(artifact.file_path).read_bytes())
+                    input_files.append(dest)
+
         job = job_bridge.create_step_job(
             db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,
             params=params, input_files=input_files or None, sequence=sequence,
@@ -97,8 +126,7 @@ def cancel_job(db: Session, user: models.User, arguments: dict) -> dict:
     job = _owned_job(db, user, arguments.get("job_id"))
     if not job:
         return {"ok": False, "error": "job not found"}
-    active = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
-    if (job.status or "").lower() in active:
+    if (job.status or "").lower() in _ACTIVE_STATUSES:
         job.status = "cancelled"
         db.commit()
     return {"ok": True, "job_id": job.id, "status": job.status}
@@ -107,12 +135,20 @@ def cancel_job(db: Session, user: models.User, arguments: dict) -> dict:
 # name -> (callable, description, json input schema)
 TOOLS = {
     "list_models": (list_models, "List the portal's models and each model's input fields/params.", {"type": "object", "properties": {}}),
-    "run_model": (run_model, "Run a portal model. Use list_models first for valid pipeline keys and params.", {
+    "run_model": (run_model,
+        "Run a portal model. Use list_models first for valid pipeline keys and params. "
+        "To use a previous job's output as this run's input (chaining, e.g. dock the backbone "
+        "an RFdiffusion job produced), pass from_job_id=<that job's id>; the server injects its "
+        "compatible outputs (a structure PDB is fed as an input file; a designed sequence is fed "
+        "as the sequence). Optionally pass source_artifact_ids to pick specific artifacts. For "
+        "DiffDock the ligand must still be provided via files or parameters.", {
         "type": "object",
         "properties": {
             "pipeline": {"type": "string"},
             "parameters": {"type": "object"},
             "sequence": {"type": "string"},
+            "from_job_id": {"type": "string"},
+            "source_artifact_ids": {"type": "array", "items": {"type": "string"}},
             "files": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "base64": {"type": "string"}}}},
         },
         "required": ["pipeline"],
