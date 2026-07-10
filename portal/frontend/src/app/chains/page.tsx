@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 
-import { CompatGraph, getChainsCompat } from "@/lib/api";
+import { CompatGraph, ExampleChain, getChainsCompat } from "@/lib/api";
 
 // Pipeline key -> short label for badges/nodes.
 const LABELS: Record<string, string> = {
@@ -31,6 +31,33 @@ function layout(keys: string[], cx: number, cy: number, r: number) {
   return pos;
 }
 
+// Semantic role -> what the chained output actually carries.
+const ROLE_KO: Record<string, string> = {
+  structure: "구조 파일",
+  sequence: "서열",
+  complex: "도킹 복합체",
+  msa: "MSA",
+};
+
+function ExampleCard({ ex }: { ex: ExampleChain }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 className="font-semibold text-slate-900">{ex.title}</h3>
+      <div className="mt-2 flex flex-wrap items-center gap-1 text-sm">
+        {ex.steps.map((s, i) => (
+          <span key={s} className="flex items-center gap-1">
+            <span className="rounded-full bg-brand-100 px-3 py-1 text-brand-700">{label(s)}</span>
+            {i < ex.steps.length - 1 && <span className="text-slate-400">→</span>}
+          </span>
+        ))}
+      </div>
+      <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+        <span className="font-medium text-slate-500">도우미에게: </span>“{ex.prompt}”
+      </p>
+    </div>
+  );
+}
+
 export default function ChainsPage() {
   const token = ""; // SSO via gateway header, like other pages
   const { data, isLoading, error } = useSWR<CompatGraph>(["chains-compat"], () => getChainsCompat(token));
@@ -45,6 +72,9 @@ export default function ChainsPage() {
   const examplesForSelected = (data?.examples ?? []).filter(
     (ex) => selected === null || ex.steps.includes(selected)
   );
+  // Every connection the selected model's output can feed into (from the graph
+  // edges — this is the complete set, not just the curated examples).
+  const outgoing = selected ? edges.filter((e) => e.from === selected) : [];
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -104,25 +134,49 @@ export default function ChainsPage() {
         </div>
 
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">예시 체인</h2>
-          {examplesForSelected.map((ex) => (
-            <div key={ex.title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-semibold text-slate-900">{ex.title}</h3>
-              <div className="mt-2 flex flex-wrap items-center gap-1 text-sm">
-                {ex.steps.map((s, i) => (
-                  <span key={s} className="flex items-center gap-1">
-                    <span className="rounded-full bg-brand-100 px-3 py-1 text-brand-700">{label(s)}</span>
-                    {i < ex.steps.length - 1 && <span className="text-slate-400">→</span>}
-                  </span>
-                ))}
+          {selected ? (
+            <>
+              <div className="rounded-2xl border border-brand-100 bg-white p-5 shadow-sm">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  「{label(selected)}」 출력으로 이어서 할 수 있는 것
+                </h2>
+                {outgoing.length > 0 ? (
+                  <ul className="mt-3 space-y-2">
+                    {outgoing.map((e) => (
+                      <li key={e.to} className="flex items-center gap-2 text-sm">
+                        <span className="rounded-full bg-brand-100 px-3 py-1 text-brand-700">{label(e.to)}</span>
+                        <span className="text-xs text-slate-400">{ROLE_KO[e.role] ?? e.role} 전달</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">
+                    이 모델의 출력은 체인의 종료점입니다 (이어지는 다음 단계 없음).
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-slate-400">
+                  챗봇에게 “이 {label(selected)} 잡 결과로 …를 돌려줘”라고 하면 서버가 자동으로 이어줍니다.
+                </p>
               </div>
-              <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                <span className="font-medium text-slate-500">도우미에게: </span>“{ex.prompt}”
+              {examplesForSelected.length > 0 && (
+                <>
+                  <h2 className="text-lg font-semibold text-slate-900">관련 예시 체인</h2>
+                  {examplesForSelected.map((ex) => (
+                    <ExampleCard key={ex.title} ex={ex} />
+                  ))}
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold text-slate-900">예시 체인</h2>
+              <p className="text-sm text-slate-500">
+                노드를 클릭하면 그 모델이 이어질 수 있는 모든 대상이 여기 표시됩니다.
               </p>
-            </div>
-          ))}
-          {examplesForSelected.length === 0 && (
-            <p className="text-sm text-slate-500">선택한 모델이 포함된 예시가 없습니다.</p>
+              {examplesForSelected.map((ex) => (
+                <ExampleCard key={ex.title} ex={ex} />
+              ))}
+            </>
           )}
         </div>
       </section>

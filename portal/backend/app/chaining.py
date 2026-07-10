@@ -43,6 +43,10 @@ EXAMPLE_CHAINS = [
      "prompt": "이 ColabFold 잡 구조로 DiffDock을 돌려줘. 리간드는 첨부할게."},
     {"title": "백본 직접 도킹", "steps": ["rfdiffusion", "diffdock"],
      "prompt": "이 RFdiffusion 백본으로 DiffDock을 돌려줘. 리간드는 첨부할게."},
+    {"title": "구조 앙상블 → 도킹", "steps": ["bioemu", "diffdock"],
+     "prompt": "이 BioEmu 잡의 구조로 DiffDock을 돌려줘. 리간드는 첨부할게."},
+    {"title": "이완 후 도킹", "steps": ["rosetta_relax", "diffdock"],
+     "prompt": "이 Rosetta Relax 잡 구조로 DiffDock을 돌려줘. 리간드는 첨부할게."},
 ]
 
 
