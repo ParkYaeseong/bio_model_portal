@@ -98,19 +98,29 @@ def plan_chain(db, source_job, target_pipeline, source_artifact_ids=None) -> Cha
 
     if source_artifact_ids:
         # Explicit artifact ids override auto-selection, but still only make
-        # sense for a target that accepts file inputs (structure via files).
+        # sense for a target that accepts file inputs (structure via files),
+        # and the chosen artifacts must be of the expected kind.
         if target_pipeline not in CHAIN_META:
             raise ChainError(f"unknown target pipeline '{target_pipeline}'")
-        if "files" not in CHAIN_META[target_pipeline]["consumes"].values():
+        files_roles = [r for r, delivery in CHAIN_META[target_pipeline]["consumes"].items()
+                       if delivery == "files"]
+        if not files_roles:
             raise ChainError(
                 f"'{target_pipeline}' does not accept file inputs; "
                 f"cannot inject explicit artifacts."
             )
+        allowed_kinds = set().union(*(_ROLE_ARTIFACT_KINDS.get(r, set()) for r in files_roles))
         wanted = set(source_artifact_ids)
         chosen = [a for a in arts if a.id in wanted]
         missing = wanted - {a.id for a in chosen}
         if missing:
             raise ChainError(f"artifact(s) not found in source job: {sorted(missing)}")
+        bad = [a.file_name for a in chosen if a.kind not in allowed_kinds]
+        if bad:
+            raise ChainError(
+                f"artifact(s) {bad} are not valid file inputs for '{target_pipeline}' "
+                f"(expected kinds: {sorted(allowed_kinds)})"
+            )
         return ChainPlan(delivery="files", artifacts=chosen, sequence=None)
 
     role_delivery = compatible_role(source_job.pipeline, target_pipeline)

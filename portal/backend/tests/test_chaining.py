@@ -95,3 +95,9 @@ def test_plan_chain_no_fasta():
     src = _job("proteinmpnn", [_art("a1", "notes.txt", "generic")])
     with pytest.raises(chaining.ChainError, match="no FASTA"):
         chaining.plan_chain(None, src, "colabfold")
+
+
+def test_plan_chain_explicit_ids_wrong_kind():
+    src = _job("rfdiffusion", [_art("a1", "stdout.log", "log")])
+    with pytest.raises(chaining.ChainError, match="not valid file inputs"):
+        chaining.plan_chain(None, src, "diffdock", source_artifact_ids=["a1"])

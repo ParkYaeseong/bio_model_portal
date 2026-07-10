@@ -83,7 +83,8 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
             else:
                 tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_chain_"))
                 for artifact in plan.artifacts:
-                    dest = tmp / artifact.file_name
+                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(artifact.file_name).name) or "input"
+                    dest = tmp / safe
                     dest.write_bytes(Path(artifact.file_path).read_bytes())
                     input_files.append(dest)
 
