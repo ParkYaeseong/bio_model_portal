@@ -405,3 +405,8 @@ def test_run_chat_hits_iteration_cap():
         out = chat_loop.run_chat(db, u, LoopingProvider(), "k", "fake-1", [{"role": "user", "content": "go"}], max_iters=3)
         assert len(out["tool_calls"]) == 3
         assert out["reply"] == "still working"
+
+
+def test_system_prompt_mentions_chaining():
+    from app.chat.loop import SYSTEM_PROMPT
+    assert "from_job_id" in SYSTEM_PROMPT
