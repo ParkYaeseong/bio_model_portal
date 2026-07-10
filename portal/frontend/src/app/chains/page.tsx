@@ -94,6 +94,7 @@ export default function ChainsPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="mb-2 text-sm text-slate-500">
             노드를 클릭하면 그 모델의 출력이 이어질 수 있는 대상이 강조됩니다.
+            <span className="text-slate-400"> (점선 = 고급 조합)</span>
           </p>
           {isLoading && <p className="p-8 text-slate-500">불러오는 중…</p>}
           {error && <p className="p-8 text-red-600">그래프를 불러오지 못했습니다.</p>}
@@ -108,6 +109,7 @@ export default function ChainsPage() {
                     x1={a.x} y1={a.y} x2={b.x} y2={b.y}
                     stroke={isActiveEdge(e.from) ? "#6366f1" : "#e2e8f0"}
                     strokeWidth={isActiveEdge(e.from) ? 1.5 : 0.75}
+                    strokeDasharray={e.advanced ? "5 4" : undefined}
                     markerEnd="url(#arrow)"
                   />
                 );
@@ -145,6 +147,9 @@ export default function ChainsPage() {
                     {outgoing.map((e) => (
                       <li key={e.to} className="flex items-center gap-2 text-sm">
                         <span className="rounded-full bg-brand-100 px-3 py-1 text-brand-700">{label(e.to)}</span>
+                        {e.advanced && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">고급</span>
+                        )}
                         <span className="text-xs text-slate-400">{ROLE_KO[e.role] ?? e.role} 전달</span>
                       </li>
                     ))}

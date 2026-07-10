@@ -28,7 +28,9 @@ def test_compatible_targets_lists_downstream():
 def test_compat_graph_shape():
     g = chaining.compat_graph()
     assert {n["key"] for n in g["nodes"]} >= {"rfdiffusion", "diffdock", "colabfold", "proteinmpnn"}
-    assert {"from": "rfdiffusion", "to": "diffdock", "role": "structure"} in g["edges"]
+    assert {"from": "rfdiffusion", "to": "diffdock", "role": "structure", "advanced": False} in g["edges"]
+    # Feeding a structure back into RFdiffusion is flagged advanced.
+    assert {"from": "colabfold", "to": "rfdiffusion", "role": "structure", "advanced": True} in g["edges"]
     assert all(e["from"] != e["to"] for e in g["edges"])
     assert any(ex["steps"][0] == "rfdiffusion" for ex in g["examples"])
 

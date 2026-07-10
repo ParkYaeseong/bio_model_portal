@@ -395,7 +395,7 @@ export const revokeMcpToken = (token: string, id: string) =>
   apiFetch<{ ok: boolean }>(`/api/mcp/tokens/${id}/revoke`, token, { method: "POST" });
 
 export type CompatNode = { key: string; produces: string[]; consumes: string[] };
-export type CompatEdge = { from: string; to: string; role: string };
+export type CompatEdge = { from: string; to: string; role: string; advanced: boolean };
 export type ExampleChain = { title: string; steps: string[]; prompt: string };
 export type CompatGraph = { nodes: CompatNode[]; edges: CompatEdge[]; examples: ExampleChain[] };
 

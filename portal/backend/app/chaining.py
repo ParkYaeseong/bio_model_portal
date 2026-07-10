@@ -34,6 +34,12 @@ CHAIN_META: dict[str, dict] = {
 # artifact kinds that satisfy a role delivered via files
 _ROLE_ARTIFACT_KINDS = {ROLE_STRUCTURE: {"structure"}}
 
+# Targets that are role-compatible but a scientifically advanced/uncommon next
+# step — feeding a structure back into de novo generation (partial diffusion /
+# motif scaffolding). Flagged "advanced" in the guide only; execution is
+# unaffected (the chatbot still chains these if asked).
+_ADVANCED_CHAIN_TARGETS = {"rfdiffusion"}
+
 EXAMPLE_CHAINS = [
     {"title": "De novo 결합체 설계", "steps": ["rfdiffusion", "proteinmpnn", "colabfold", "diffdock"],
      "prompt": "RFdiffusion으로 백본을 만들고, 그 결과로 ProteinMPNN 서열 설계, ColabFold로 접은 뒤 DiffDock으로 리간드를 도킹해줘."},
@@ -162,7 +168,7 @@ def compat_graph() -> dict:
         for k, v in CHAIN_META.items()
     ]
     edges = [
-        {"from": src, "to": dst, "role": rd[0]}
+        {"from": src, "to": dst, "role": rd[0], "advanced": dst in _ADVANCED_CHAIN_TARGETS}
         for src in CHAIN_META
         for dst in CHAIN_META
         if src != dst and (rd := compatible_role(src, dst))
