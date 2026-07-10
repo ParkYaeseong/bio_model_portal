@@ -14,7 +14,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import models
+from . import chaining_exec, models
 from .config import get_settings
 from .database import SessionLocal
 from .phastest import convert_to_cgview, render_html_report
@@ -105,10 +105,44 @@ class JobMonitor:
             if (output_status := (output.get("status") or "").lower()) in {"error", "failed"}:
                 job.status = "failed"
                 job.error_message = output.get("message") or output.get("details") or "RunPod worker reported an error."
+                self._advance_pending_chains(db, job, ok=False)
                 return
             self._persist_output(db, job, output)
+            self._advance_pending_chains(db, job, ok=True)
         elif status_upper in {"FAILED", "TIMED_OUT", "CANCELLED", "COMPLETED_WITH_ERRORS"}:
             job.error_message = response.get("error") or response.get("message") or status_detail
+            self._advance_pending_chains(db, job, ok=False)
+
+    def _advance_pending_chains(self, db: Session, job: models.Job, ok: bool) -> None:
+        chains = db.query(models.PendingChain).filter_by(
+            source_job_id=job.id, status="pending").all()
+        for chain in chains:
+            if not ok:
+                chain.status = "cancelled"
+                chain.error = f"source job {job.id} did not complete"
+                continue
+            chain.status = "processing"  # guard against a re-poll double-firing
+            owner = db.get(models.User, chain.user_id)
+            steps = list(chain.steps or [])
+            step, rest = steps[0], steps[1:]
+            try:
+                new_job = chaining_exec.submit_chained(
+                    db, owner,
+                    pipeline=step["pipeline"],
+                    params=step.get("parameters") or {},
+                    from_job_id=job.id,
+                    source_artifact_ids=step.get("source_artifact_ids"),
+                )
+            except Exception as exc:  # noqa: BLE001 (ChainError / ValueError)
+                chain.status = "failed"
+                chain.error = str(exc)
+                continue
+            if rest:
+                chain.source_job_id = new_job.id
+                chain.steps = rest
+                chain.status = "pending"
+            else:
+                chain.status = "done"
 
     def _persist_output(self, db: Session, job: models.Job, output: dict) -> None:
         target_dir = results_dir(job.user_id, job.id)
