@@ -86,3 +86,23 @@ def test_advance_is_idempotent(monkeypatch, tmp_path):
         monitor._advance_pending_chains(db, src, ok=True); db.commit()
         monitor._advance_pending_chains(db, src, ok=True); db.commit()
         assert len(captured.get("jobs", [])) == 1
+
+
+def test_advance_sees_unflushed_artifacts(monkeypatch, tmp_path):
+    # Mirrors _update_job: _persist_output adds artifacts WITHOUT flushing, then the
+    # hook runs in the same transaction. plan_chain must still see them (db.flush()).
+    with SessionLocal() as db:
+        u = _user(db)
+        j = models.Job(user_id=u.id, title="src", pipeline="rfdiffusion", status="completed")
+        db.add(j); db.commit(); db.refresh(j)
+        db.add(models.PendingChain(user_id=u.id, source_job_id=j.id,
+               steps=[{"pipeline": "proteinmpnn", "parameters": {}}], status="pending"))
+        db.commit()
+        # artifact added AFTER the pending-chain commit and left UNFLUSHED, like _persist_output
+        pdb = tmp_path / "backbone.pdb"; pdb.write_text("ATOM\n")
+        db.add(models.Artifact(job_id=j.id, file_name="backbone.pdb", file_path=str(pdb), kind="structure"))
+        captured = {}; _capture(monkeypatch, captured)
+        monitor._advance_pending_chains(db, j, ok=True); db.commit()
+        assert captured.get("jobs"), "hook did not submit the next step (artifacts invisible?)"
+        assert "backbone.pdb" in captured["jobs"][0]["files"]
+        assert db.query(models.PendingChain).filter_by(source_job_id=j.id).one().status == "done"

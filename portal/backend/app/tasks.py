@@ -71,9 +71,9 @@ class JobMonitor:
 
     def _poll_once(self) -> None:
         with SessionLocal() as db:
-            jobs: Iterable[models.Job] = db.execute(
+            jobs = list(db.execute(
                 select(models.Job).where(models.Job.status.in_(ACTIVE_JOB_STATUSES))
-            ).scalars()
+            ).scalars())
             for job in jobs:
                 self._update_job(db, job)
             self._cleanup_expired(db)
@@ -114,6 +114,8 @@ class JobMonitor:
             self._advance_pending_chains(db, job, ok=False)
 
     def _advance_pending_chains(self, db: Session, job: models.Job, ok: bool) -> None:
+        db.flush()  # _persist_output added artifacts without flushing (autoflush=False);
+                    # make them visible to plan_chain's lazy source_job.artifacts read.
         chains = db.query(models.PendingChain).filter_by(
             source_job_id=job.id, status="pending").all()
         for chain in chains:
@@ -124,6 +126,8 @@ class JobMonitor:
             chain.status = "processing"  # guard against a re-poll double-firing
             owner = db.get(models.User, chain.user_id)
             steps = list(chain.steps or [])
+            if not steps:
+                chain.status = "failed"; chain.error = "empty step list"; continue
             step, rest = steps[0], steps[1:]
             try:
                 new_job = chaining_exec.submit_chained(
