@@ -151,7 +151,7 @@ def test_run_chain_submits_first_and_queues_rest(monkeypatch):
         u = _user(db)
         captured = {}; _capture_create(monkeypatch, captured)
         r = tools.run_chain(db, u, {
-            "steps": [{"pipeline": "rfdiffusion", "parameters": {}},
+            "steps": [{"pipeline": "rfdiffusion", "parameters": {"length": "100"}},
                       {"pipeline": "proteinmpnn", "parameters": {}}],
             "sequence": "ACDEF",
         })

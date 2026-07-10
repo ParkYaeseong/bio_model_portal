@@ -82,6 +82,16 @@ def submit_chained(
                     dest.write_bytes(Path(artifact.file_path).read_bytes())
                     input_files.append(dest)
 
+        if pipeline == "rfdiffusion" and not (
+            input_files or params.get("length") or params.get("contigs") or params.get("contig")
+        ):
+            raise ValueError(
+                "RFdiffusion needs a design spec: set 'length' for de novo (recommended: 100), "
+                "or provide a PDB file with 'contigs' for motif scaffolding. A sequence is not a "
+                "valid RFdiffusion input. Ask the user for a length, or offer the recommended "
+                "default (length=100) and confirm before running."
+            )
+
         return job_bridge.create_step_job(
             db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,
             params=params, input_files=input_files or None, sequence=sequence,

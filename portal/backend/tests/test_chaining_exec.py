@@ -76,3 +76,29 @@ def test_submit_chained_unfinished_source_raises(monkeypatch):
         db.add(j); db.commit(); db.refresh(j)
         with pytest.raises(ValueError, match="not finished"):
             chaining_exec.submit_chained(db, u, pipeline="diffdock", params={}, from_job_id=j.id)
+
+
+def test_submit_chained_rfdiffusion_without_spec_raises():
+    with SessionLocal() as db:
+        u = _user(db)
+        with pytest.raises(ValueError, match="RFdiffusion needs a design spec"):
+            chaining_exec.submit_chained(db, u, pipeline="rfdiffusion", params={}, sequence="ACDEF")
+
+
+def test_submit_chained_rfdiffusion_with_length_ok(monkeypatch):
+    with SessionLocal() as db:
+        u = _user(db)
+        captured = {}; _capture(monkeypatch, captured)
+        job = chaining_exec.submit_chained(db, u, pipeline="rfdiffusion", params={"length": "100"})
+        assert job.status == "submitted"
+
+
+def test_submit_chained_rfdiffusion_with_uploaded_pdb_ok(monkeypatch):
+    with SessionLocal() as db:
+        u = _user(db)
+        captured = {}; _capture(monkeypatch, captured)
+        import base64
+        pdb_b64 = base64.b64encode(b"ATOM      1  N   ALA A   1\n").decode()
+        job = chaining_exec.submit_chained(db, u, pipeline="rfdiffusion", params={},
+                                           files=[{"name": "target.pdb", "base64": pdb_b64}])
+        assert job.status == "submitted"

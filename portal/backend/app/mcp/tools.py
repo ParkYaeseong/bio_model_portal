@@ -108,6 +108,12 @@ def cancel_job(db: Session, user: models.User, arguments: dict) -> dict:
 TOOLS = {
     "list_models": (list_models, "List the portal's models and each model's input fields/params.", {"type": "object", "properties": {}}),
     "run_model": (run_model,
+        "Before running, make sure required parameters are set — call list_models to see each "
+        "model's fields (a field's 'placeholder' is the recommended default). If the user didn't "
+        "give a required parameter, ASK them; if they still don't provide one, offer the "
+        "recommended default and confirm before running. rfdiffusion needs 'length' (de novo, "
+        "recommended 100) or a PDB + 'contigs' (motif) — a sequence is NOT valid rfdiffusion "
+        "input. "
         "Run a portal model. Use list_models first for valid pipeline keys and params. "
         "To use a previous job's output as this run's input (chaining, e.g. dock the backbone "
         "an RFdiffusion job produced), pass from_job_id=<that job's id>; the server injects its "
@@ -126,6 +132,12 @@ TOOLS = {
         "required": ["pipeline"],
     }),
     "run_chain": (run_chain,
+        "Before running, make sure required parameters are set — call list_models to see each "
+        "model's fields (a field's 'placeholder' is the recommended default). If the user didn't "
+        "give a required parameter, ASK them; if they still don't provide one, offer the "
+        "recommended default and confirm before running. rfdiffusion needs 'length' (de novo, "
+        "recommended 100) or a PDB + 'contigs' (motif) — a sequence is NOT valid rfdiffusion "
+        "input. "
         "Run an ordered multi-step chain in one call (e.g. rfdiffusion then proteinmpnn "
         "then colabfold then diffdock). Step 1 runs immediately from the user's attached "
         "input/sequence; each later step runs AUTOMATICALLY when its predecessor finishes, "
