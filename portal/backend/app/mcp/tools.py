@@ -14,6 +14,7 @@ from ..workflow import job_bridge
 from .. import chaining
 
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB per file
+_ACTIVE_STATUSES = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
 
 
 def _field(f) -> dict:
@@ -70,8 +71,7 @@ def run_model(db: Session, user: models.User, arguments: dict) -> dict:
             src = _owned_job(db, user, from_job_id)
             if not src:
                 return {"ok": False, "error": "source job not found"}
-            active = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
-            if (src.status or "").lower() in active:
+            if (src.status or "").lower() in _ACTIVE_STATUSES:
                 return {"ok": False, "error": f"source job {src.id} is not finished (status={src.status})"}
             try:
                 plan = chaining.plan_chain(db, src, pipeline, source_artifact_ids)
@@ -125,8 +125,7 @@ def cancel_job(db: Session, user: models.User, arguments: dict) -> dict:
     job = _owned_job(db, user, arguments.get("job_id"))
     if not job:
         return {"ok": False, "error": "job not found"}
-    active = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
-    if (job.status or "").lower() in active:
+    if (job.status or "").lower() in _ACTIVE_STATUSES:
         job.status = "cancelled"
         db.commit()
     return {"ok": True, "job_id": job.id, "status": job.status}
