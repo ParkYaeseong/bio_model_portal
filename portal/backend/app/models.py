@@ -169,3 +169,17 @@ class ImprovementArtifact(Base):
     payload: Mapped[dict | None] = mapped_column(JSON, default=dict)
     stats: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
+
+class PendingChain(Base):
+    __tablename__ = "pending_chains"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # The job this chain is currently waiting on to finish.
+    source_job_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    # Ordered remaining steps: [{"pipeline", "parameters", "source_artifact_ids"?}].
+    steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|processing|done|cancelled|failed
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+

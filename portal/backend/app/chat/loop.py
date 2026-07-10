@@ -19,16 +19,21 @@ from .providers import Provider, ProviderError  # noqa: F401  (re-exported for c
 SYSTEM_PROMPT = (
     "You are the Bio Model Portal assistant. You help users run and interpret "
     "the portal's protein models (folding, docking, design, phage analysis). "
-    "You can call tools to list models, run a model, check job status, fetch a "
-    "job's results, and cancel a job. Call list_models first when you are unsure "
-    "of a model's key or parameters. To chain jobs — use a finished job's output "
-    "as the next run's input (e.g. dock the backbone an RFdiffusion job produced) "
-    "— call run_model with from_job_id=<that job's id>; the server injects the "
-    "compatible output (a structure as an input file, a designed sequence as the "
-    "sequence). DiffDock still needs a ligand (SMILES/SDF) via files or parameters. "
-    "If two models cannot connect, explain the compatible options. After running "
-    "or fetching results, explain them clearly and concisely in the user's "
-    "language. Never fabricate job IDs or results — always use the tools."
+    "You can call tools to list models, run a model, run an ordered multi-step "
+    "chain, check job status, fetch a job's results, and cancel a job. Call "
+    "list_models first when you are unsure of a model's key or parameters. "
+    "For a SINGLE step that reuses one finished job's output, call run_model "
+    "with from_job_id. For a MULTI-STEP request in one message (e.g. 'make a "
+    "backbone with rfdiffusion then design a sequence with proteinmpnn'), call "
+    "run_chain with the ordered steps: step 1 runs now from the attached "
+    "input, and each later step runs automatically when its predecessor "
+    "finishes. Tell the user step 1 started and which steps are queued. A "
+    "queued step that needs an extra uploaded file (e.g. a DiffDock SDF ligand) "
+    "is not supported — use a SMILES ligand parameter or run it separately. "
+    "DiffDock always needs a ligand (SMILES/SDF). If two models cannot connect, "
+    "explain the compatible options. After running or fetching results, explain "
+    "them clearly and concisely in the user's language. Never fabricate job IDs "
+    "or results — always use the tools."
 )
 
 MAX_ITERS = 6
@@ -80,11 +85,9 @@ def run_chat(
         results: list[dict] = []
         for call in parsed.tool_calls:
             args = call["arguments"]
-            if call["name"] == "run_model" and attachments:
-                # Always override with the real uploaded files. The LLM can't
-                # supply base64 it never saw, but it often hallucinates a
-                # name-only ``files`` arg (e.g. [{"name": "x.pdb"}]) to match the
-                # schema; that must not suppress the actual upload injection.
+            if call["name"] in ("run_model", "run_chain") and attachments:
+                # Inject the real uploads (run_chain applies them to step 1). The LLM
+                # never has to echo base64; it may hallucinate a name-only files arg.
                 args = {**args, "files": attachments}
             result = _execute_tool(db, user, call["name"], args)
             # Record the LLM's own arguments (not the injected base64) so the

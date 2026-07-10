@@ -1,20 +1,11 @@
 from __future__ import annotations
 
-import base64
-import re
-import shutil
-import tempfile
-from pathlib import Path
-
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import chaining, chaining_exec, models
 from ..runpod import PIPELINES
-from ..workflow import job_bridge
-from .. import chaining
-
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB per file
-_ACTIVE_STATUSES = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
+from ..chaining_exec import _ACTIVE_STATUSES, _owned_job
+from ..workflow import job_bridge  # noqa: F401 -- tests patch tools.job_bridge.create_step_job
 
 
 def _field(f) -> dict:
@@ -38,68 +29,49 @@ def list_models(db: Session, user: models.User, arguments: dict) -> dict:
 
 
 def run_model(db: Session, user: models.User, arguments: dict) -> dict:
-    pipeline = str(arguments.get("pipeline") or "")
-    if pipeline not in PIPELINES:
-        return {"ok": False, "error": f"unknown pipeline '{pipeline}'. valid: {sorted(PIPELINES)}"}
-    params = arguments.get("parameters") or {}
-    sequence = arguments.get("sequence")
-    from_job_id = arguments.get("from_job_id")
-    source_artifact_ids = arguments.get("source_artifact_ids")
-
-    input_files: list[Path] = []
-    tmp: Path | None = None
     try:
-        for item in arguments.get("files") or []:
-            b64 = item.get("base64")
-            if not b64:
-                continue
-            try:
-                data = base64.b64decode(b64)
-            except Exception:
-                return {"ok": False, "error": "a file's base64 content is invalid"}
-            if len(data) > _MAX_UPLOAD_BYTES:
-                return {"ok": False, "error": f"file exceeds {_MAX_UPLOAD_BYTES} bytes"}
-            tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_upload_"))
-            safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(item.get("name") or "input"))
-            dest = tmp / (safe or "input")
-            dest.write_bytes(data)
-            input_files.append(dest)
-
-        if from_job_id or source_artifact_ids:
-            if not from_job_id:
-                return {"ok": False, "error": "from_job_id is required when source_artifact_ids is set"}
-            src = _owned_job(db, user, from_job_id)
-            if not src:
-                return {"ok": False, "error": "source job not found"}
-            if (src.status or "").lower() in _ACTIVE_STATUSES:
-                return {"ok": False, "error": f"source job {src.id} is not finished (status={src.status})"}
-            try:
-                plan = chaining.plan_chain(db, src, pipeline, source_artifact_ids)
-            except chaining.ChainError as exc:
-                return {"ok": False, "error": str(exc)}
-            if plan.delivery == "sequence":
-                if not (sequence and str(sequence).strip()):
-                    sequence = plan.sequence
-            else:
-                tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_chain_"))
-                for artifact in plan.artifacts:
-                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(artifact.file_name).name) or "input"
-                    dest = tmp / safe
-                    dest.write_bytes(Path(artifact.file_path).read_bytes())
-                    input_files.append(dest)
-
-        job = job_bridge.create_step_job(
-            db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,
-            params=params, input_files=input_files or None, sequence=sequence,
+        job = chaining_exec.submit_chained(
+            db, user,
+            pipeline=str(arguments.get("pipeline") or ""),
+            params=arguments.get("parameters") or {},
+            sequence=arguments.get("sequence"),
+            files=arguments.get("files"),
+            from_job_id=arguments.get("from_job_id"),
+            source_artifact_ids=arguments.get("source_artifact_ids"),
         )
-    finally:
-        if tmp is not None:
-            shutil.rmtree(tmp, ignore_errors=True)  # bytes already copied into uploads_dir
+    except (ValueError, chaining.ChainError) as exc:
+        return {"ok": False, "error": str(exc)}
     return {"ok": True, "job_id": job.id, "status": job.status, "endpoint_id": job.endpoint_id}
 
 
-def _owned_job(db: Session, user: models.User, job_id: str) -> models.Job | None:
-    return db.query(models.Job).filter_by(id=str(job_id or ""), user_id=user.id).first()
+def run_chain(db: Session, user: models.User, arguments: dict) -> dict:
+    steps = arguments.get("steps") or []
+    if not steps:
+        return {"ok": False, "error": "steps is required (at least one step)"}
+    for s in steps:
+        p = str((s or {}).get("pipeline") or "")
+        if p not in PIPELINES:
+            return {"ok": False, "error": f"unknown pipeline '{p}'. valid: {sorted(PIPELINES)}"}
+    first = steps[0]
+    try:
+        job = chaining_exec.submit_chained(
+            db, user,
+            pipeline=str(first.get("pipeline")),
+            params=first.get("parameters") or {},
+            sequence=arguments.get("sequence"),
+            files=arguments.get("files"),
+            from_job_id=first.get("from_job_id"),
+            source_artifact_ids=first.get("source_artifact_ids"),
+        )
+    except (ValueError, chaining.ChainError) as exc:
+        return {"ok": False, "error": str(exc)}
+    rest = steps[1:]
+    if rest:
+        db.add(models.PendingChain(
+            user_id=user.id, source_job_id=job.id, steps=rest, status="pending"))
+        db.commit()
+    return {"ok": True, "first_job_id": job.id, "first_status": job.status,
+            "queued": [str(s.get("pipeline")) for s in rest]}
 
 
 def job_status(db: Session, user: models.User, arguments: dict) -> dict:
@@ -152,6 +124,25 @@ TOOLS = {
             "files": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "base64": {"type": "string"}}}},
         },
         "required": ["pipeline"],
+    }),
+    "run_chain": (run_chain,
+        "Run an ordered multi-step chain in one call (e.g. rfdiffusion then proteinmpnn "
+        "then colabfold then diffdock). Step 1 runs immediately from the user's attached "
+        "input/sequence; each later step runs AUTOMATICALLY when its predecessor finishes, "
+        "feeding the predecessor's output in. Use this when the user asks to do several "
+        "models in sequence in one message. A queued (non-first) step that needs an extra "
+        "uploaded file (e.g. a DiffDock SDF ligand) is not supported — use a SMILES ligand "
+        "in that step's parameters, or run it separately. After calling, tell the user step 1 "
+        "started and which steps are queued.", {
+        "type": "object",
+        "properties": {
+            "steps": {"type": "array", "items": {"type": "object", "properties": {
+                "pipeline": {"type": "string"},
+                "parameters": {"type": "object"},
+            }, "required": ["pipeline"]}},
+            "sequence": {"type": "string"},
+        },
+        "required": ["steps"],
     }),
     "job_status": (job_status, "Get a job's status.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
     "job_result": (job_result, "Get a job's artifacts + metrics for explaining results.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
