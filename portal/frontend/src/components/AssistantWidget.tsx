@@ -392,7 +392,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
         <div
           className={`${
             expanded ? "w-[760px]" : "w-[380px]"
-          } max-w-[94vw] rounded-3xl border border-slate-200 bg-white shadow-2xl`}
+          } flex max-h-[calc(100vh-3rem)] max-w-[94vw] flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl`}
         >
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <div>
@@ -479,7 +479,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             )}
           </div>
 
-          <div className="space-y-3 px-4 py-3 text-sm text-slate-600">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3 text-sm text-slate-600">
             <div className="flex gap-2">
               <select
                 value={provider}
@@ -606,7 +606,7 @@ export function AssistantWidget({ token, jobs, initialJobId }: Props) {
             <div
               ref={threadRef}
               className={`${
-                expanded ? "h-[62vh]" : "h-72"
+                expanded ? "min-h-0 flex-1" : "h-72"
               } resize-y overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50 p-3 text-xs`}
             >
               {messages.length === 0 && (
