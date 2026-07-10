@@ -93,9 +93,19 @@ def plan_chain(db, source_job, target_pipeline, source_artifact_ids=None) -> Cha
     Reads no bytes for files delivery (returns artifact rows; caller copies
     file_path). For sequence delivery it reads the source FASTA text only.
     """
+    # db is accepted for caller symmetry; this function reads only source_job + files.
     arts = list(source_job.artifacts)
 
     if source_artifact_ids:
+        # Explicit artifact ids override auto-selection, but still only make
+        # sense for a target that accepts file inputs (structure via files).
+        if target_pipeline not in CHAIN_META:
+            raise ChainError(f"unknown target pipeline '{target_pipeline}'")
+        if "files" not in CHAIN_META[target_pipeline]["consumes"].values():
+            raise ChainError(
+                f"'{target_pipeline}' does not accept file inputs; "
+                f"cannot inject explicit artifacts."
+            )
         wanted = set(source_artifact_ids)
         chosen = [a for a in arts if a.id in wanted]
         missing = wanted - {a.id for a in chosen}
