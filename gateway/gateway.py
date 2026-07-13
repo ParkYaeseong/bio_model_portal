@@ -265,9 +265,13 @@ def _run_job(job_id: str) -> None:
                     json={"input": adapted, "id": job_id},
                 )
             if response.status_code >= 400:
+                # Keep enough of the worker body to include the real crash line.
+                # The old 1000-char cap cut RFD3/worker tracebacks off right after
+                # the harmless hydra/CCD_MIRROR_PATH startup warnings, hiding the
+                # actual failure. 20k is plenty for a full stderr, still bounded.
                 _mark_failed(
                     job_id,
-                    f"worker http {response.status_code}: {response.text[:1000]}",
+                    f"worker http {response.status_code}: {response.text[:20000]}",
                 )
                 return
             data = response.json()

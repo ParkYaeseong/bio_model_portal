@@ -37,3 +37,13 @@ def test_rfd3_custom_range_remaps_both_endpoints():
     contig = out["inputs"]["spec-1"]["contig"]
     # both endpoints must be remapped (no bare original 201/202 left); processed are 140/141
     assert contig == "A140-141", contig
+
+def test_rfd3_pdb_without_contig_autofills_recommended():
+    # A PDB uploaded with no contig (the chat/MCP path, which — unlike the UI —
+    # doesn't run contig suggestion) must auto-fill the recommended contig so RFD3
+    # doesn't reject it with "Input provided but unused in composition spec".
+    out = rfd3.build_input({"input_archive": _archive(), "length": 100})
+    spec = out["inputs"]["spec-1"]
+    assert spec["input"] == "input.pdb"
+    assert spec.get("contig"), "expected an auto-filled contig for a PDB with no contig"
+    assert "length" not in spec  # a motif contig supersedes the bare de-novo length

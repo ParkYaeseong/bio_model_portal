@@ -6,6 +6,19 @@ from . import structure
 def _normalize_contig_token(value: str) -> str:
     return str(value or "").replace(":", "")  # "A:1" -> "A1" (mirror protein_pipeline)
 
+def _recommended_contig(pdb_text: str) -> str | None:
+    """The contig the UI would pre-select for this PDB (ligand motif if present,
+    else the first chain). Returns None if suggestion fails so callers fall back
+    to the pre-existing behavior."""
+    try:
+        from . import contig_suggest
+        sugg = contig_suggest.suggest(pdb_text)
+        rec = next((o for o in sugg.get("options", [])
+                    if o.get("recommended") and o.get("contig")), None)
+        return rec["contig"] if rec else None
+    except Exception:
+        return None
+
 def _remap_contig(contig: str, mapping: dict, *, processed_coords: bool) -> str:
     """Remap a custom contig from original PDB numbering to preprocessed numbering.
     Dropdown/recommended contigs are already in processed coords -> normalize only.
@@ -54,6 +67,18 @@ def build_input(payload: dict) -> dict:
         clean, mapping = structure.preprocess(pdb_text)
         out["input_files"] = {"input.pdb": clean}
         spec["input"] = "input.pdb"
+        if not contig:
+            # A PDB was uploaded with no contig. The UI form runs contig
+            # suggestion and pre-selects a recommended contig; the chat/MCP path
+            # does not, so it used to send an input PDB that no contig references
+            # — which RFD3 rejects ("Input provided but unused in composition
+            # specification"). Auto-fill the same recommended contig the UI would
+            # pick so the input is actually used.
+            rec = _recommended_contig(pdb_text)
+            if rec:
+                contig = rec
+                processed_coords = True  # suggestion contigs are in processed coords
+                length = None            # a motif contig supersedes a bare de-novo length
         if contig:
             spec["contig"] = _remap_contig(str(contig), mapping, processed_coords=processed_coords)
         if length:
