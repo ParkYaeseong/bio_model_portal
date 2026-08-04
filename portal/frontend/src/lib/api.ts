@@ -402,3 +402,72 @@ export type CompatGraph = { nodes: CompatNode[]; edges: CompatEdge[]; examples: 
 export async function getChainsCompat(token?: string): Promise<CompatGraph> {
   return apiFetch<CompatGraph>("/api/chains/compat", token);
 }
+
+// --- Antigen validation (binder scoring) ----------------------------------
+
+export type BinderMetric = { name: string; higher_is_better: boolean };
+
+export type BinderMetrics = {
+  ipsae: number | null;
+  iptm_pae: number | null;
+  iptm_af2: number | null;
+  pdockq: number | null;
+  lis: number | null;
+  interface_plddt: number | null;
+  pae_interaction: number | null;
+  plddt_mean: number | null;
+  epitope_plddt: number | null;
+  epitope_rmsd: number | null;
+  epitope_sasa: number | null;
+  epitope_residues_matched: number | null;
+  n_chains: number | null;
+  n_residues: number | null;
+  n_contacts: number | null;
+  best_chain_pair: string | null;
+};
+
+export type BinderResult = {
+  id?: string;
+  ok: boolean;
+  mode: string | null;
+  reason: string | null;
+  primary_metric: string;
+  primary_value: number | null;
+  passed?: boolean | null;
+  metrics: BinderMetrics;
+  warnings: string[];
+  error: string | null;
+};
+
+export type BinderScoreResponse = BinderResult & {
+  results?: BinderResult[];
+  count?: number;
+  passed_ids?: string[];
+  unscored_ids?: string[];
+};
+
+export type BinderScoreRequest = {
+  candidates: { id?: string; structure: string; scores?: unknown }[];
+  reference_structure?: string;
+  epitope?: string;
+  primary_metric: string;
+  cutoff?: number;
+  pae_cutoff?: number;
+  dist_cutoff?: number;
+};
+
+export async function getBinderMetrics(
+  token?: string,
+): Promise<{ metrics: BinderMetric[]; default: string }> {
+  return apiFetch<{ metrics: BinderMetric[]; default: string }>("/api/binder-score/metrics", token);
+}
+
+export async function scoreBinders(
+  payload: BinderScoreRequest,
+  token?: string,
+): Promise<BinderScoreResponse> {
+  return apiFetch<BinderScoreResponse>("/api/binder-score/score", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

@@ -31,6 +31,13 @@ endpoints:
     worker_url: http://211.188.35.221:18162
     packager: esmfold
     adapter: esmfold
+  # Antigen validation: interface-confidence scoring (ipSAE and friends) over a
+  # structure plus its PAE matrix. CPU only, no weights. Requires the NCP ACG to
+  # allow inbound TCP 18108 on the worker host.
+  binder-score-local:
+    worker_url: http://211.188.35.221:18108
+    packager: generic
+    adapter: passthrough
 
   # RunPod serverless passthrough (no local GPU worker for these models)
   alphafold-local:

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .database import Base, engine
 from .mcp.server import router as mcp_router
-from .routers import assistant, auth, chains, chat, jobs, mcp_tokens, pipelines, rfdiffusion, selfimprove, users, workflows
+from .routers import assistant, auth, binder_score, chains, chat, jobs, mcp_tokens, pipelines, rfdiffusion, selfimprove, users, workflows
 from .selfimprove.scheduler import selfimprove_scheduler
 from .tasks import monitor
 from .workflow.monitor import workflow_monitor
@@ -34,6 +34,7 @@ app.include_router(chat.router)
 app.include_router(chains.router)
 app.include_router(selfimprove.router)
 app.include_router(rfdiffusion.router)
+app.include_router(binder_score.router)
 app.include_router(workflows.router)
 app.include_router(mcp_tokens.router)
 app.include_router(mcp_router)
