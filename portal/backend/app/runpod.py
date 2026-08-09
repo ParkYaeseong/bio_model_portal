@@ -222,6 +222,13 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 required=True,
                 placeholder="1",
             ),
+            InputField(
+                name="partial_t",
+                label="Partial diffusion 타임스텝",
+                field_type="number",
+                minimum=1,
+                helper="선택 항목: 업로드한 PDB를 부분적으로만 노이즈화해 재설계 (partial diffusion). PDB+Contig와 함께 사용. 비워두면 전체 디퓨전.",
+            ),
         ],
         preview_kind="protein",
     ),
@@ -345,6 +352,36 @@ PIPELINES: dict[str, PipelineDefinition] = {
                     {"value": "mmseqs2_uniref_env", "label": "mmseqs2 uniref+env (기본)"},
                     {"value": "single_sequence", "label": "단일 시퀀스 (MSA 없음)"},
                 ],
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="protein",
+    ),
+    "alphafold3": PipelineDefinition(
+        key="alphafold3",
+        label="AlphaFold3",
+        description=(
+            "AlphaFold3 구조 예측 (자체 GPU 서버, 로컬 유전 데이터베이스 사용). "
+            "비상업적 연구 목적으로만 사용 가능 (DeepMind AF3 파라미터 라이선스)."
+        ),
+        endpoint_attr="alphafold3_endpoint_id",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB).",
+        input_fields=[
+            InputField(
+                name="num_recycles",
+                label="Recycle 횟수",
+                field_type="number",
+                placeholder="10",
+                minimum=1,
+                helper="비워두면 AF3 기본값 사용.",
+            ),
+            InputField(
+                name="num_diffusion_samples",
+                label="Diffusion 샘플 수",
+                field_type="number",
+                placeholder="5",
+                minimum=1,
+                helper="비워두면 AF3 기본값 사용.",
             ),
         ],
         supports_sequence=True,

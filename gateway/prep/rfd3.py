@@ -92,6 +92,13 @@ def build_input(payload: dict) -> dict:
     hotspots = out.pop("hotspots", None) or out.pop("hotspot_res", None)
     if hotspots:
         spec["hotspots"] = hotspots
+    # The worker reads partial_t from the per-design spec (spec["partial_t"]),
+    # not from the top-level payload. Without this pop it stays a stray
+    # top-level key here and the worker never sees it, silently running full
+    # diffusion regardless of what was requested.
+    partial_t = out.pop("partial_t", None) or out.pop("partial_T", None)
+    if partial_t is not None:
+        spec["partial_t"] = partial_t
     if spec:
         out["inputs"] = {"spec-1": spec}
     out.pop("input_archive", None)

@@ -32,6 +32,18 @@ def test_rfd3_unconditional_length_only():
     out = rfd3.build_input({"length": 10})
     assert out["inputs"]["spec-1"] == {"length": "10"}
 
+def test_rfd3_partial_t_reaches_the_spec_the_worker_reads():
+    # The worker reads partial_t from spec["partial_t"], not a top-level key.
+    # Without routing it there, a caller-supplied partial_t was silently
+    # dropped and RFD3 ran full diffusion regardless of what was asked for.
+    out = rfd3.build_input({"length": 100, "partial_t": 20})
+    assert out["inputs"]["spec-1"]["partial_t"] == 20
+    assert "partial_t" not in out
+
+def test_rfd3_partial_capital_t_alias_also_routes():
+    out = rfd3.build_input({"length": 100, "partial_T": 15})
+    assert out["inputs"]["spec-1"]["partial_t"] == 15
+
 def test_rfd3_custom_range_remaps_both_endpoints():
     out = rfd3.build_input({"input_archive": _archive(), "contigs": "A201-202"})
     contig = out["inputs"]["spec-1"]["contig"]

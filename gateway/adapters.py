@@ -75,6 +75,11 @@ def adapter_esmfold(payload: dict) -> dict:
     return sequence.build_folding_input(payload, model="ESMFold")
 
 
+def adapter_af3(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="AlphaFold3")
+
+
 def adapter_alphafold(payload: dict) -> dict:
     from prep import sequence
     out = sequence.build_folding_input(payload, model="AlphaFold2")
@@ -96,6 +101,7 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "bioemu": adapter_bioemu,
     "colabfold": adapter_colabfold,
     "esmfold": adapter_esmfold,
+    "af3": adapter_af3,
     "alphafold": adapter_alphafold,
     "passthrough": adapter_passthrough,
 }

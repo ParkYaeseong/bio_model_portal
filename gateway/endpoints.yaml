@@ -31,6 +31,12 @@ endpoints:
     worker_url: http://211.188.35.221:18162
     packager: esmfold
     adapter: esmfold
+  # AlphaFold3 (non-commercial license only - see WEIGHTS_TERMS_OF_USE.md in the
+  # AF3 repo). Requires the NCP ACG to allow inbound TCP 18110 on the worker host.
+  alphafold3-local:
+    worker_url: http://211.188.35.221:18110
+    packager: af3
+    adapter: af3
   # Antigen validation: interface-confidence scoring (ipSAE and friends) over a
   # structure plus its PAE matrix. CPU only, no weights. Requires the NCP ACG to
   # allow inbound TCP 18108 on the worker host.

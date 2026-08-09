@@ -109,6 +109,20 @@ def package_colabfold(output: dict) -> str:
     return _build(build)
 
 
+def package_af3(output: dict) -> str:
+    """AlphaFold3: the worker returns an mmCIF (not PDB) plus a confidences
+    dict with ptm/iptm/chain_pair_iptm - materialize the structure and keep
+    the confidences visible in output.json rather than buried in an archive."""
+    def build(tar: tarfile.TarFile) -> None:
+        _add_raw_json(tar, output)
+        cif = output.get("ranked_0_cif")
+        if isinstance(cif, str) and cif.strip():
+            _add_text(tar, "af3_model.cif", cif)
+        _add_streams(tar, output)
+
+    return _build(build)
+
+
 def package_proteinmpnn(output: dict) -> str:
     def build(tar: tarfile.TarFile) -> None:
         _add_raw_json(tar, output)
@@ -252,6 +266,7 @@ PACKAGERS: dict[str, Callable[[dict], str]] = {
     "esmfold": package_esmfold,
     "esmfold2": package_esmfold2,
     "colabfold": package_colabfold,
+    "af3": package_af3,
     "proteinmpnn": package_proteinmpnn,
     "rfd3": package_rfd3,
     "mmseqs": package_mmseqs,
