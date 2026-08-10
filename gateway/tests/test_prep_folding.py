@@ -13,6 +13,45 @@ def test_folding_extracts_sequence_from_pdb():
     assert out["sequence"] and len(out["sequence"]) > 50
     assert "input_archive" not in out
 
+
+def _multichain_pdb_archive():
+    body = (
+        "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n"
+        "ATOM      2  N   ALA A   2       0.000   0.000   0.000  1.00  0.00           N\n"
+        "ATOM      3  N   GLY B   1       0.000   0.000   0.000  1.00  0.00           N\n"
+    ).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        ti = tarfile.TarInfo("complex.pdb")
+        ti.size = len(body)
+        t.addfile(ti, io.BytesIO(body))
+    return {"base64": base64.b64encode(buf.getvalue()).decode()}
+
+
+def test_colabfold_multichain_pdb_upload_keeps_every_chain():
+    # Before the fix this silently collapsed to just the longest chain.
+    out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="ColabFold")
+    assert ":" in out["sequence"]
+    assert out["sequence"].count(":") == 1
+
+
+def test_alphafold3_multichain_pdb_upload_keeps_every_chain():
+    out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="AlphaFold3")
+    assert ":" in out["sequence"]
+
+
+def test_esmfold_multichain_pdb_upload_still_takes_only_the_longest_chain():
+    # ESMFold can't fold a ':'-joined complex -- must keep the old behavior.
+    out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="ESMFold")
+    assert ":" not in out["sequence"]
+
+
+def test_alphafold2_multichain_pdb_upload_still_takes_only_the_longest_chain():
+    # AF2's multimer convention is a separate FASTA-archive/'/' path, not a
+    # colon-joined sequence -- must not get one it would just reject.
+    out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="AlphaFold2")
+    assert ":" not in out["sequence"]
+
 def test_folding_passthrough_typed_sequence():
     out = sequence.build_folding_input({"sequence":"MKTAYIAKQR","model_preset":"monomer"}, model="ColabFold")
     assert out["sequence"]=="MKTAYIAKQR" and out["model_preset"]=="monomer"
@@ -125,6 +164,41 @@ def test_folding_still_errors_when_archive_has_no_sequence():
     archive = {"base64": base64.b64encode(buf.getvalue()).decode(), "kind": "uploaded"}
     with pytest.raises(ValueError):
         sequence.build_folding_input({"input_archive": archive}, model="ColabFold")
+
+
+def test_af3_json_textarea_is_parsed_and_bypasses_sequence_requirement():
+    raw = '{"name": "j", "sequences": [{"protein": {"id": "A", "sequence": "MKT"}}], "modelSeeds": [1], "dialect": "alphafold3", "version": 3}'
+    out = sequence.build_folding_input({"af3_json": raw}, model="AlphaFold3")
+    assert out["af3_json"] == {
+        "name": "j",
+        "sequences": [{"protein": {"id": "A", "sequence": "MKT"}}],
+        "modelSeeds": [1],
+        "dialect": "alphafold3",
+        "version": 3,
+    }
+    assert "sequence" not in out
+
+
+def test_af3_json_dict_passthrough_bypasses_sequence_requirement():
+    payload_json = {"name": "j", "sequences": []}
+    out = sequence.build_folding_input({"af3_json": payload_json}, model="AlphaFold3")
+    assert out["af3_json"] == payload_json
+
+
+def test_af3_json_blank_textarea_is_dropped_and_falls_back_to_sequence():
+    out = sequence.build_folding_input({"af3_json": "  ", "sequence": "MKT"}, model="AlphaFold3")
+    assert "af3_json" not in out
+    assert out["sequence"] == "MKT"
+
+
+def test_af3_json_invalid_json_raises():
+    with pytest.raises(ValueError):
+        sequence.build_folding_input({"af3_json": "{not valid json"}, model="AlphaFold3")
+
+
+def test_af3_json_non_object_raises():
+    with pytest.raises(ValueError):
+        sequence.build_folding_input({"af3_json": "[1, 2, 3]"}, model="AlphaFold3")
 
 
 def test_af2_extra_flags_renamed_to_alphafold_extra_flags():

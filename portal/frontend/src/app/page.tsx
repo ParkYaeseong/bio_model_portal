@@ -851,6 +851,14 @@ function SubmissionPanel(props: SubmissionPanelProps) {
                   </option>
                 ))}
               </select>
+            ) : field.field_type === "textarea" ? (
+              <textarea
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs"
+                rows={6}
+                placeholder={field.placeholder || ""}
+                value={paramState[field.name] || ""}
+                onChange={(e) => onParamChange(field.name, e.target.value)}
+              />
             ) : (
               <input
                 type={

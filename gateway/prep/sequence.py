@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 
 # The 20 standard amino acids BioEmu/RFD3 accept (IUPAC). Models reject anything
 # else (e.g. 'X' for unknown residues) at input validation, after the request
@@ -30,12 +31,14 @@ def validate_protein_sequence(sequence: str, *, model: str) -> None:
         )
 
 
-def sequence_from_structure(payload: dict) -> str:
-    """Best-effort: derive a single-chain sequence from an uploaded PDB/CIF.
+def sequence_from_structure(payload: dict, *, multimer: bool = False) -> str:
+    """Best-effort: derive a sequence from an uploaded PDB/CIF.
 
-    BioEmu samples conformational ensembles from a SEQUENCE, not a structure. If
-    the user uploaded a PDB instead of typing a sequence, recover the sequence
-    (longest chain — the main protein) so the job can run.
+    BioEmu/ESMFold sample/fold a single chain, so the default is the longest
+    chain (the main protein) — same as before. Multimer-capable models
+    (ColabFold, AlphaFold3) pass multimer=True to instead recover every chain,
+    ':'-joined in file order, so a multi-chain PDB upload doesn't silently
+    collapse to just its longest chain.
     """
     from bio import pdb as _pdb  # vendored, pure stdlib
     from . import structure
@@ -46,6 +49,8 @@ def sequence_from_structure(payload: dict) -> str:
     by_chain = _pdb.sequence_by_chain(_pdb.normalize_structure_text(pdb_text))
     if not by_chain:
         return ""
+    if multimer and len(by_chain) > 1:
+        return ":".join(seq.strip() for seq in by_chain.values())
     return max(by_chain.values(), key=len).strip()
 
 
@@ -108,9 +113,37 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
     from .defaults import apply_defaults
 
     out = dict(payload)
+
+    # AF3's advanced escape hatch: a full AF3 fold-input JSON (ligands, ions,
+    # RNA/DNA, modified residues, custom MSA/templates, covalent bonds,
+    # userCCD, ...) that the worker passes straight through, bypassing every
+    # other field here entirely -- so skip sequence derivation altogether.
+    af3_json = out.get("af3_json")
+    if isinstance(af3_json, str):
+        if not af3_json.strip():
+            out.pop("af3_json", None)  # blank textarea -> drop, don't send an empty string
+        else:
+            try:
+                parsed = json.loads(af3_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"AF3 입력 JSON 형식이 올바르지 않습니다: {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("AF3 입력 JSON은 객체(object)여야 합니다.")
+            out["af3_json"] = parsed
+            out.pop("input_archive", None)
+            return out
+    elif isinstance(af3_json, dict):
+        out.pop("input_archive", None)
+        return out
+
     has_seq = bool(str(out.get("sequence", "") or "").strip()) or bool(out.get("sequences"))
     if not has_seq:
-        seq = sequence_from_structure(out)
+        # Only these two accept a ':'-joined complex directly in `sequence`.
+        # ESMFold can't fold one (see the multimer rejection below), and AF2's
+        # multimer path is a separate FASTA-archive/'/' convention entirely —
+        # feeding it a colon-joined string here would just fail its own
+        # validation, so both keep the old longest-chain-only extraction.
+        seq = sequence_from_structure(out, multimer=model in ("ColabFold", "AlphaFold3"))
         if seq:
             out["sequence"] = seq
         elif model == "AlphaFold2" and _archive_has_fasta(out.get("input_archive")):

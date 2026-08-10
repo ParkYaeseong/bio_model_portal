@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import re
 from typing import Any
 from . import structure
 from .defaults import apply_defaults
@@ -29,6 +30,24 @@ def _chains_list(payload: dict) -> list[str] | None:
     if isinstance(chains, (list, tuple)):
         return [str(c) for c in chains] or None
     return None
+
+
+def _parse_fixed_positions_text(text: str) -> dict[str, list[int]]:
+    """Parse the UI's comma-separated chain-prefixed form, e.g. "A1,A5-8,B3",
+    into the {chain: [resseq, ...]} shape the worker expects. Mirrors the
+    chain-prefixed-token convention already used for RFD3's contigs/hotspots."""
+    out: dict[str, list[int]] = {}
+    for token in text.replace(" ", "").split(","):
+        if not token:
+            continue
+        m = re.match(r"^([A-Za-z])(\d+)(?:-(\d+))?$", token)
+        if not m:
+            raise ValueError(f"invalid fixed_positions token: {token!r} (expected e.g. A1 or A5-8)")
+        chain, start, end = m.group(1), int(m.group(2)), m.group(3)
+        positions = range(start, int(end) + 1) if end else (start,)
+        out.setdefault(chain, [])
+        out[chain].extend(positions)
+    return {chain: sorted(set(positions)) for chain, positions in out.items()}
 
 
 def _remap_fixed_positions(fixed_positions: dict, mapping: dict) -> dict:
@@ -80,6 +99,21 @@ def build_input(payload: dict) -> dict:
     for key in _PASSTHROUGH:
         if key in payload and payload[key] is not None:
             out[key] = payload[key]
+
+    # The portal UI sends fixed_positions as free text (e.g. "A1,A5-8,B3"); the
+    # MCP/API path may already send the {chain: [resseq, ...]} dict directly.
+    fixed_positions = out.get("fixed_positions")
+    if isinstance(fixed_positions, str):
+        fixed_positions = _parse_fixed_positions_text(fixed_positions) or None
+        if fixed_positions:
+            out["fixed_positions"] = fixed_positions
+        else:
+            out.pop("fixed_positions", None)
+
+    # A <select> sends "true"/"false" strings; a naive `if value:` would treat
+    # "false" as truthy, so coerce explicitly rather than trusting Python's bool().
+    if isinstance(out.get("use_soluble_model"), str):
+        out["use_soluble_model"] = out["use_soluble_model"].strip().lower() == "true"
 
     # Remap fixed_positions through the preprocess mapping unless the caller says
     # they are already in processed coordinates.

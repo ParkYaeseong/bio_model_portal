@@ -289,6 +289,30 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 placeholder="",
                 helper="비워두면 워커 기본. 재현하려면 고정 정수.",
             ),
+            InputField(
+                name="pdb_path_chains",
+                label="디자인할 체인",
+                field_type="text",
+                placeholder="A,B",
+                helper="재설계할 체인. 비워두면 전체 체인을 재설계합니다. 나머지 체인은 결합 상대(context)로 그대로 유지됩니다.",
+            ),
+            InputField(
+                name="fixed_positions",
+                label="고정할 잔기",
+                field_type="text",
+                placeholder="A1,A5-8,B3",
+                helper="선택 항목: 재설계하지 않고 원래 서열을 유지할 잔기. 예: A1-10 (범위), B33 (단일).",
+            ),
+            InputField(
+                name="use_soluble_model",
+                label="가용성(soluble) 모델 사용",
+                field_type="select",
+                options=[
+                    {"value": "true", "label": "예 (기본, 가용성 최적화 가중치)"},
+                    {"value": "false", "label": "아니오 (표준 가중치)"},
+                ],
+                helper="비워두면 예(가용성 모델)로 처리됩니다.",
+            ),
         ],
         requires_archive=True,
         preview_kind="protein",
@@ -397,6 +421,23 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 placeholder="5",
                 minimum=1,
                 helper="비워두면 AF3 기본값 사용.",
+            ),
+            InputField(
+                name="seed",
+                label="Random seed",
+                field_type="number",
+                helper="비워두면 워커 기본값(1) 사용. 같은 입력·seed면 결과가 재현됩니다.",
+            ),
+            InputField(
+                name="af3_json",
+                label="AF3 입력 JSON 직접 지정 (고급)",
+                field_type="textarea",
+                helper=(
+                    "리간드·이온·RNA/DNA·변형 잔기·MSA/템플릿 지정·공유결합 등 AF3 공식 입력 "
+                    "스키마의 모든 기능을 쓰려면, AF3 fold-input 형식의 JSON을 여기 붙여넣으세요. "
+                    "채워지면 위 서열/Recycle/Diffusion/seed 입력은 전부 무시되고 이 JSON이 그대로 "
+                    "AF3에 전달됩니다. (DeepMind AF3 입력 문서 참고)"
+                ),
             ),
         ],
         supports_sequence=True,

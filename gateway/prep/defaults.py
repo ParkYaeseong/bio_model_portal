@@ -40,6 +40,7 @@ MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
         "sampling_temp": 0.1,      # ProteinMPNN default
         "batch_size": 1,           # ProteinMPNN default
         "backbone_noise": 0.0,     # ProteinMPNN default
+        "use_soluble_model": True,  # matches RAPID's own client default
     },
     "colabfold": {
         "num_recycle": 3,                  # ColabFold default
