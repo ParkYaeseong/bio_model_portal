@@ -206,6 +206,8 @@ export interface JobResponse {
   eta_seconds?: number | null;
   avg_seconds?: number | null;
   elapsed_seconds?: number | null;
+  // Set only when an admin is viewing another account's job.
+  owner?: string | null;
 }
 
 export type AssistantRequest = {

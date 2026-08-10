@@ -51,7 +51,12 @@ HOP_BY_HOP_HEADERS = {
 # Identity headers are produced solely by this gateway from the verified
 # session. Any inbound copy is dropped before proxying so a client cannot spoof
 # an identity by sending these headers itself.
-IDENTITY_HEADERS = {"x-kbf-user", "x-kbf-email", "x-kbf-name", "x-kbf-auth"}
+IDENTITY_HEADERS = {"x-kbf-user", "x-kbf-email", "x-kbf-name", "x-kbf-auth", "x-kbf-admin"}
+
+#: The one Keycloak realm role that already exists for this purpose (kbf-admin
+#: holds it for exactly one account) — reused as-is rather than inventing a
+#: parallel admin list.
+KBF_ADMIN_REALM_ROLE = "kbf-admin"
 
 
 def _sign_payload(secret_key: str, payload: str) -> str:
@@ -208,7 +213,22 @@ def _identity_headers(kbf_user: dict) -> dict[str, str]:
         value = str(kbf_user.get(claim_key) or "").strip()
         if value:
             headers[header_name] = quote(value, safe="@.")
+    claims = kbf_user.get("claims")
+    if isinstance(claims, dict) and KBF_ADMIN_REALM_ROLE in _get_realm_roles(claims):
+        # A bare presence header: existence means "this account holds
+        # kbf-admin", so an empty/false value must never be emitted.
+        headers["X-KBF-Admin"] = "true"
     return headers
+
+
+def _get_realm_roles(claims: dict) -> set[str]:
+    realm_access = claims.get("realm_access")
+    if not isinstance(realm_access, dict):
+        return set()
+    roles = realm_access.get("roles")
+    if not isinstance(roles, list):
+        return set()
+    return {str(role).strip() for role in roles if str(role).strip()}
 
 
 def _get_client_roles(claims: dict, client_id: str) -> set[str]:

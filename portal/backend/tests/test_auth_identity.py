@@ -109,6 +109,27 @@ class HeaderIdentityTests(unittest.TestCase):
             auth.settings.kbf_forward_auth_secret = orig_secret
             auth.settings.kbf_allow_insecure_sso_header = orig_flag
 
+    def test_admin_header_marks_the_user_as_admin(self) -> None:
+        user = auth.get_current_user(db=self.db, token=None, x_kbf_user="sub-admin", x_kbf_admin="true")
+        self.assertTrue(user.is_admin)
+
+    def test_admin_header_ignored_unless_exactly_true(self) -> None:
+        user = auth.get_current_user(db=self.db, token=None, x_kbf_user="sub-notadmin", x_kbf_admin="1")
+        self.assertFalse(user.is_admin)
+
+    def test_missing_admin_header_defaults_to_not_admin(self) -> None:
+        user = auth.get_current_user(db=self.db, token=None, x_kbf_user="sub-plain")
+        self.assertFalse(user.is_admin)
+
+    def test_jwt_path_is_never_admin(self) -> None:
+        local = models.User(username="bob", password_hash=auth.hash_password("pw"))
+        self.db.add(local)
+        self.db.commit()
+        self.db.refresh(local)
+        token = auth.create_access_token({"sub": "bob"})
+        user = auth.get_current_user(db=self.db, token=token, x_kbf_user=None)
+        self.assertFalse(user.is_admin)
+
     def test_jwt_still_works_without_header(self) -> None:
         local = models.User(username="alice", password_hash=auth.hash_password("pw"))
         self.db.add(local)

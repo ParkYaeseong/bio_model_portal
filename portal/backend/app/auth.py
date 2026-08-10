@@ -78,6 +78,7 @@ def get_current_user(
     x_kbf_email: str | None = Header(default=None, alias="X-KBF-Email"),
     x_kbf_name: str | None = Header(default=None, alias="X-KBF-Name"),
     x_kbf_auth: str | None = Header(default=None, alias="X-KBF-Auth"),
+    x_kbf_admin: str | None = Header(default=None, alias="X-KBF-Admin"),
 ) -> models.User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -104,7 +105,11 @@ def get_current_user(
         # sub — its presence means someone is trying to smuggle an identity.
         if sub.startswith(SSO_USERNAME_PREFIX):
             raise credentials_exception
-        return provision_sso_user(db, sub, x_kbf_email, x_kbf_name)
+        user = provision_sso_user(db, sub, x_kbf_email, x_kbf_name)
+        # Same trust boundary as the sub itself: this header only reaches us
+        # once the checks above (shared secret / dev opt-in) have passed.
+        user.is_admin = isinstance(x_kbf_admin, str) and x_kbf_admin.strip().lower() == "true"
+        return user
 
     # Fallback: legacy bearer-token auth (local dev, tests, pre-SSO clients).
     if not token:
@@ -120,4 +125,5 @@ def get_current_user(
     user = get_user_by_username(db, username=token_data.username)
     if user is None:
         raise credentials_exception
+    user.is_admin = False
     return user

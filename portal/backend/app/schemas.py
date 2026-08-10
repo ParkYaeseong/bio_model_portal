@@ -68,6 +68,9 @@ class JobRead(JobBase):
     eta_seconds: int | None = None
     avg_seconds: int | None = None
     elapsed_seconds: int | None = None
+    # Set only when an admin is viewing another account's job (never for the
+    # owner's own jobs, admin or not).
+    owner: str | None = None
 
     class Config:
         orm_mode = True

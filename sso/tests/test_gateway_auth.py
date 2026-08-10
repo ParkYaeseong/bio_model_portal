@@ -141,6 +141,65 @@ def test_proxy_drops_client_supplied_identity_headers(app, client, monkeypatch: 
     assert "x-kbf-auth" not in sent                    # no secret configured -> not injected, forged dropped
 
 
+def test_auth_verify_marks_the_kbf_admin_role_as_admin(app, client):
+    _login_session(client, claims={"realm_access": {"roles": ["kbf-admin"]}})
+
+    response = app.handle_request(
+        "GET",
+        "/auth/verify",
+        headers={
+            "host": "rbpfinder.k-biofoundrycopilot.duckdns.org",
+            "cookie": client._cookie_header(),
+            "x-forwarded-uri": "/",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-KBF-Admin"] == "true"
+
+
+def test_auth_verify_omits_the_admin_header_for_everyone_else(app, client):
+    _login_session(client, claims={"realm_access": {"roles": ["some-other-role"]}})
+
+    response = app.handle_request(
+        "GET",
+        "/auth/verify",
+        headers={
+            "host": "rbpfinder.k-biofoundrycopilot.duckdns.org",
+            "cookie": client._cookie_header(),
+            "x-forwarded-uri": "/",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "X-KBF-Admin" not in response.headers
+
+
+def test_a_client_supplied_admin_header_is_stripped_before_proxying(app, client, monkeypatch: pytest.MonkeyPatch):
+    _login_session(client)
+    captured: dict = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["headers"] = kwargs.get("headers", {})
+        return SimpleNamespace(status_code=200, content=b"ok", headers={})
+
+    monkeypatch.setattr("app.requests.request", fake_request)
+
+    response = app.handle_request(
+        "GET",
+        "/api/projects",
+        headers={
+            "host": "rbpfinder.k-biofoundrycopilot.duckdns.org",
+            "cookie": client._cookie_header(),
+            "x-kbf-admin": "true",  # forged
+        },
+    )
+
+    assert response.status_code == 200
+    sent = {k.lower(): v for k, v in captured["headers"].items()}
+    assert "x-kbf-admin" not in sent
+
+
 def test_logout_bridge_clears_session_cookie_and_returns_completion_html(client):
     _login_session(client)
 

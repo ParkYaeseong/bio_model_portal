@@ -1347,7 +1347,10 @@ function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">{job.title}</p>
-                <p className="text-xs text-slate-500">{job.pipeline.toUpperCase()} · {new Date(job.created_at).toLocaleString("ko-KR")}</p>
+                <p className="text-xs text-slate-500">
+                  {job.pipeline.toUpperCase()} · {new Date(job.created_at).toLocaleString("ko-KR")}
+                  {job.owner && <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-500">{job.owner}</span>}
+                </p>
               </div>
               <JobStatusBadge status={job.status} />
             </div>
