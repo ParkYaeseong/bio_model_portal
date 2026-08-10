@@ -86,6 +86,11 @@ def adapter_alphafold(payload: dict) -> dict:
     return sequence.assemble_alphafold_flags(out)
 
 
+def adapter_antifold(payload: dict) -> dict:
+    from prep import antifold
+    return antifold.build_input(payload)
+
+
 def adapter_passthrough(payload: dict) -> dict:
     out = dict(payload)
     out.pop("input_archive", None)
@@ -103,6 +108,7 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "esmfold": adapter_esmfold,
     "af3": adapter_af3,
     "alphafold": adapter_alphafold,
+    "antifold": adapter_antifold,
     "passthrough": adapter_passthrough,
 }
 

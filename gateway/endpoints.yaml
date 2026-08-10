@@ -44,6 +44,14 @@ endpoints:
     worker_url: http://211.188.35.221:18108
     packager: generic
     adapter: passthrough
+  # AntiFold: antibody-specific inverse folding (ESM-IF1 fine-tuned on SAbDab/
+  # OAS), an alternative to ProteinMPNN for antibody CDR/FR redesign. Output
+  # shape (native/samples/raw_fasta) matches ProteinMPNN's, so it reuses that
+  # packager.
+  antifold-local:
+    worker_url: http://211.188.35.221:18111
+    packager: proteinmpnn
+    adapter: antifold
 
   # RunPod serverless passthrough (no local GPU worker for these models)
   alphafold-local:

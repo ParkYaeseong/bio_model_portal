@@ -356,6 +356,84 @@ PIPELINES: dict[str, PipelineDefinition] = {
         requires_archive=True,
         preview_kind="protein",
     ),
+    "antifold": PipelineDefinition(
+        key="antifold",
+        label="AntiFold (항체 전용)",
+        description="항체 전용 inverse-folding 모델(AntiFold)로 CDR/FR을 재설계합니다. ProteinMPNN 항체 모드의 대안입니다.",
+        endpoint_attr="antifold_endpoint_id",
+        instructions=(
+            "항체 가변 도메인 구조(PDB)를 업로드하세요. IMGT 넘버링은 자동으로 처리되므로 "
+            "원본 구조를 그대로 올리면 됩니다."
+        ),
+        input_fields=[
+            InputField(
+                name="heavy_chain",
+                label="Heavy chain ID",
+                field_type="text",
+                placeholder="H",
+                helper="비워두면 H. 나노바디(단일 도메인)는 대신 'Nanobody chain'을 채우세요.",
+            ),
+            InputField(
+                name="light_chain",
+                label="Light chain ID",
+                field_type="text",
+                placeholder="L",
+                helper="비워두면 L. 나노바디를 지정하면 이 필드는 무시됩니다.",
+            ),
+            InputField(
+                name="nanobody_chain",
+                label="Nanobody chain ID (단일 도메인, VHH)",
+                field_type="text",
+                placeholder="",
+                helper="입력하면 heavy/light chain 대신 이 체인 하나만 단일 도메인 항체로 처리합니다.",
+            ),
+            InputField(
+                name="antigen_chain",
+                label="Antigen chain ID (선택)",
+                field_type="text",
+                placeholder="A",
+                helper="항원과의 복합체 구조라면 입력하세요. 항원을 컨텍스트로 포함해 재설계합니다.",
+            ),
+            InputField(
+                name="regions",
+                label="재설계할 리전 (IMGT)",
+                field_type="select",
+                options=[
+                    {"value": "CDR1 CDR2 CDR3H", "label": "CDR만 (기본, CDR-H3 포함)"},
+                    {"value": "CDRH CDRL", "label": "CDR만 (H+L 체인 전체)"},
+                    {"value": "FWH FWL", "label": "Framework(FR)만"},
+                    {"value": "all", "label": "전체 (CDR + FR)"},
+                ],
+                helper=(
+                    "Framework(FR)를 고르면 ProteinMPNN 대신 항체 전용 모델(AntiFold)로 "
+                    "framework 영역을 재설계합니다 - 일반 모델보다 항체 자연성/발현성에 유리합니다."
+                ),
+            ),
+            InputField(
+                name="num_seq_per_target",
+                label="타겟당 시퀀스 수",
+                field_type="number",
+                placeholder="8",
+                helper="비워두면 기본값 8.",
+            ),
+            InputField(
+                name="sampling_temp",
+                label="샘플링 온도",
+                field_type="text",
+                placeholder="0.20",
+                helper="비워두면 기본값 0.20. 낮을수록 원본에 가까운(보수적인) 시퀀스가 나옵니다.",
+            ),
+            InputField(
+                name="seed",
+                label="랜덤 시드",
+                field_type="number",
+                placeholder="42",
+                helper="비워두면 기본값 42.",
+            ),
+        ],
+        requires_archive=True,
+        preview_kind="protein",
+    ),
     "mmseqs": PipelineDefinition(
         key="mmseqs",
         label="MMseqs2",
