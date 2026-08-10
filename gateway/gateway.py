@@ -34,6 +34,19 @@ RUNPOD_API_BASE = os.getenv("RUNPOD_API_BASE", "https://api.runpod.ai/v2").rstri
 RUNPOD_POLL_TIMEOUT_S = int(os.getenv("RUNPOD_POLL_TIMEOUT_S", "3600"))
 RUNPOD_POLL_INTERVAL_S = float(os.getenv("RUNPOD_POLL_INTERVAL_S", "5"))
 
+# Local bop workers: submitting one held-open request (timeout=None) for a job
+# that can legitimately run tens of minutes (e.g. AlphaFold3's genetic-database
+# search) let a network intermediary silently drop the idle connection before
+# the worker's response could ever arrive -- the worker finished, but nobody
+# was still listening. Workers now answer /run with PENDING immediately and
+# do the work in the background; this polls their /status the same way
+# _runpod_poll already polls RunPod's, so a dropped connection costs one
+# retry instead of the whole job.
+LOCAL_POLL_TIMEOUT_S = int(os.getenv("LOCAL_POLL_TIMEOUT_S", "21600"))
+LOCAL_POLL_INTERVAL_S = float(os.getenv("LOCAL_POLL_INTERVAL_S", "10"))
+_LOCAL_TERMINAL_OK = {"COMPLETED", "SUCCESS", "OK"}
+_LOCAL_TERMINAL_PENDING = {"PENDING", "RUNNING", "IN_QUEUE", "IN_PROGRESS"}
+
 ENDPOINTS: dict[str, dict[str, str]] = {}
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -136,6 +149,47 @@ def _runpod_submit(runpod_id: str, adapted: dict) -> str:
     if not rp_job:
         raise RuntimeError(f"runpod did not return a job id: {sub}")
     return str(rp_job)
+
+
+def _local_submit(worker_url: str, adapted: dict, job_id: str) -> dict:
+    """POST to a local bop worker's /run. Short timeout: this call only needs
+    to last long enough for the worker to accept the job and answer (PENDING
+    for current async workers; COMPLETED directly for any worker not yet
+    migrated to the async pattern) -- the actual compute, if any, happens
+    after this call returns."""
+    with httpx.Client(timeout=60) as client:
+        response = client.post(f"{worker_url}/run", json={"input": adapted, "id": job_id})
+    if response.status_code >= 400:
+        # Keep enough of the worker body to include the real crash line.
+        raise RuntimeError(f"worker http {response.status_code}: {response.text[:20000]}")
+    return response.json()
+
+
+def _local_poll(worker_url: str, job_id: str) -> dict:
+    """Poll a local worker's GET /status?id=<job_id> to completion."""
+    deadline = time.time() + LOCAL_POLL_TIMEOUT_S
+    consecutive_errors = 0
+    with httpx.Client(timeout=30) as client:
+        while True:
+            if time.time() > deadline:
+                raise RuntimeError(f"worker job {job_id} timed out after {LOCAL_POLL_TIMEOUT_S}s")
+            try:
+                response = client.get(f"{worker_url}/status", params={"id": job_id})
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                consecutive_errors += 1
+                if consecutive_errors > 5:
+                    raise RuntimeError(f"worker status poll for {job_id} failed repeatedly: {exc}") from exc
+                time.sleep(LOCAL_POLL_INTERVAL_S)
+                continue
+            consecutive_errors = 0
+            data = response.json()
+            status = str(data.get("status") or "").upper()
+            if status in _LOCAL_TERMINAL_OK or status == "FAILED":
+                return data
+            if status == "NOT_FOUND":
+                raise RuntimeError(f"worker job {job_id} not found (worker may have restarted)")
+            time.sleep(LOCAL_POLL_INTERVAL_S)
 
 
 def _runpod_poll(runpod_id: str, rp_job: str) -> dict:
@@ -259,22 +313,14 @@ def _run_job(job_id: str) -> None:
                 _save_jobs()
             data = _runpod_poll(runpod_id, rp_job)
         else:
-            with httpx.Client(timeout=None) as client:
-                response = client.post(
-                    f"{worker_url}/run",
-                    json={"input": adapted, "id": job_id},
-                )
-            if response.status_code >= 400:
-                # Keep enough of the worker body to include the real crash line.
-                # The old 1000-char cap cut RFD3/worker tracebacks off right after
-                # the harmless hydra/CCD_MIRROR_PATH startup warnings, hiding the
-                # actual failure. 20k is plenty for a full stderr, still bounded.
-                _mark_failed(
-                    job_id,
-                    f"worker http {response.status_code}: {response.text[:20000]}",
-                )
-                return
-            data = response.json()
+            submitted = _local_submit(worker_url, adapted, job_id)
+            status = str(submitted.get("status") or "").upper()
+            if status in _LOCAL_TERMINAL_PENDING:
+                data = _local_poll(worker_url, job_id)
+            else:
+                # Old-style worker (not yet migrated to the async pattern):
+                # /run already answered with the final result directly.
+                data = submitted
     except Exception as exc:  # noqa: BLE001
         LOG.exception("job %s worker call failed", job_id)
         _mark_failed(job_id, f"{type(exc).__name__}: {exc}")
