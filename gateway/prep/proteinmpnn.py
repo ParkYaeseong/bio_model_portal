@@ -100,26 +100,42 @@ def build_input(payload: dict) -> dict:
         if key in payload and payload[key] is not None:
             out[key] = payload[key]
 
-    # The portal UI sends fixed_positions as free text (e.g. "A1,A5-8,B3"); the
-    # MCP/API path may already send the {chain: [resseq, ...]} dict directly.
-    fixed_positions = out.get("fixed_positions")
-    if isinstance(fixed_positions, str):
-        fixed_positions = _parse_fixed_positions_text(fixed_positions) or None
-        if fixed_positions:
-            out["fixed_positions"] = fixed_positions
-        else:
-            out.pop("fixed_positions", None)
+    design_mode = str(payload.get("design_mode") or "manual").strip().lower()
+    if design_mode == "antibody":
+        # IMGT/CDR-based masking supersedes any manually-typed fixed_positions
+        # -- computed straight off `clean` (the already-preprocessed/renumbered
+        # PDB), so it needs no further remapping.
+        from .antibody_cdr import compute_antibody_fixed_positions
+
+        include_framework = str(payload.get("include_framework") or "").strip().lower() == "true"
+        out["fixed_positions"] = compute_antibody_fixed_positions(
+            clean,
+            chains=chains,
+            include_framework=include_framework,
+            mutable_include=payload.get("mutable_include"),
+            mutable_exclude=payload.get("mutable_exclude"),
+        )
+    else:
+        # The portal UI sends fixed_positions as free text (e.g. "A1,A5-8,B3");
+        # the MCP/API path may already send the {chain: [resseq, ...]} dict.
+        fixed_positions = out.get("fixed_positions")
+        if isinstance(fixed_positions, str):
+            fixed_positions = _parse_fixed_positions_text(fixed_positions) or None
+            if fixed_positions:
+                out["fixed_positions"] = fixed_positions
+            else:
+                out.pop("fixed_positions", None)
+
+        # Remap fixed_positions through the preprocess mapping unless the
+        # caller says they are already in processed coordinates.
+        fixed_positions = out.get("fixed_positions")
+        if fixed_positions and not payload.get("fixed_positions_processed_coords"):
+            out["fixed_positions"] = _remap_fixed_positions(fixed_positions, mapping)
 
     # A <select> sends "true"/"false" strings; a naive `if value:` would treat
     # "false" as truthy, so coerce explicitly rather than trusting Python's bool().
     if isinstance(out.get("use_soluble_model"), str):
         out["use_soluble_model"] = out["use_soluble_model"].strip().lower() == "true"
-
-    # Remap fixed_positions through the preprocess mapping unless the caller says
-    # they are already in processed coordinates.
-    fixed_positions = out.get("fixed_positions")
-    if fixed_positions and not payload.get("fixed_positions_processed_coords"):
-        out["fixed_positions"] = _remap_fixed_positions(fixed_positions, mapping)
 
     out["cleanup"] = payload.get("cleanup", True)
 

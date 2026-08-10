@@ -297,11 +297,50 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 helper="재설계할 체인. 비워두면 전체 체인을 재설계합니다. 나머지 체인은 결합 상대(context)로 그대로 유지됩니다.",
             ),
             InputField(
+                name="design_mode",
+                label="설계 모드",
+                field_type="select",
+                options=[
+                    {"value": "manual", "label": "일반 (직접 지정, 기본)"},
+                    {"value": "antibody", "label": "항체 (IMGT 기반 CDR 자동 마스킹)"},
+                ],
+                helper=(
+                    "항체 모드를 고르면 업로드한 항체 서열을 ANARCII로 IMGT 넘버링하여 CDR 루프만 "
+                    "재설계 대상으로 남기고 나머지는 자동으로 고정합니다 (아래 '고정할 잔기'는 이 모드에서 무시됨). "
+                    "결합 항원 구조 없이 서열만으로 판단하므로, 항원-접촉 기반 필터링(antigen_pipeline의 전체 분석)보다는 "
+                    "단순화된 버전입니다."
+                ),
+            ),
+            InputField(
+                name="include_framework",
+                label="Framework Region(FR) 포함 (항체 모드)",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (CDR만 재설계, 기본)"},
+                    {"value": "true", "label": "예 (FR도 재설계 대상에 포함)"},
+                ],
+                helper="항체 모드에서만 적용됩니다. VHH 골격 유지에 필요한 4개 위치(IMGT 37/44/45/47)와 시스테인은 FR 포함 시에도 항상 고정됩니다.",
+            ),
+            InputField(
+                name="mutable_include",
+                label="추가로 재설계 허용할 잔기 (항체 모드)",
+                field_type="text",
+                placeholder="H1,L5-8",
+                helper="선택 항목, 항체 모드 전용. CDR/FR 판정과 무관하게 강제로 재설계 대상에 포함합니다 (시스테인 제외).",
+            ),
+            InputField(
+                name="mutable_exclude",
+                label="재설계에서 제외할 잔기 (항체 모드)",
+                field_type="text",
+                placeholder="H105,H108-110",
+                helper="선택 항목, 항체 모드 전용. CDR이라도 이 목록에 있으면 강제로 고정합니다.",
+            ),
+            InputField(
                 name="fixed_positions",
-                label="고정할 잔기",
+                label="고정할 잔기 (일반 모드)",
                 field_type="text",
                 placeholder="A1,A5-8,B3",
-                helper="선택 항목: 재설계하지 않고 원래 서열을 유지할 잔기. 예: A1-10 (범위), B33 (단일).",
+                helper="일반 모드 전용 (항체 모드에서는 무시됨). 재설계하지 않고 원래 서열을 유지할 잔기. 예: A1-10 (범위), B33 (단일).",
             ),
             InputField(
                 name="use_soluble_model",
