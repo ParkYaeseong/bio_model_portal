@@ -152,12 +152,14 @@ def _runpod_submit(runpod_id: str, adapted: dict) -> str:
 
 
 def _local_submit(worker_url: str, adapted: dict, job_id: str) -> dict:
-    """POST to a local bop worker's /run. Short timeout: this call only needs
-    to last long enough for the worker to accept the job and answer (PENDING
-    for current async workers; COMPLETED directly for any worker not yet
-    migrated to the async pattern) -- the actual compute, if any, happens
-    after this call returns."""
-    with httpx.Client(timeout=60) as client:
+    """POST to a local bop worker's /run. Async workers answer almost
+    instantly with PENDING, but a worker not yet migrated to the async
+    pattern (ColabFold, ESMFold, MMseqs, ANARCII, binder_score) doesn't
+    answer /run until the job is actually done -- this call must be able to
+    hold open for the full poll budget in that case, or a real (multi-minute)
+    job on one of those workers times out here before it ever gets a chance
+    to run."""
+    with httpx.Client(timeout=LOCAL_POLL_TIMEOUT_S) as client:
         response = client.post(f"{worker_url}/run", json={"input": adapted, "id": job_id})
     if response.status_code >= 400:
         # Keep enough of the worker body to include the real crash line.
