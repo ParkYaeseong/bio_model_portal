@@ -161,7 +161,22 @@ PIPELINES: dict[str, PipelineDefinition] = {
         description="Meta의 ESMFold v1로 단일 시퀀스 구조 예측을 수행합니다 (로컬 GPU).",
         endpoint_attr="esmfold_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요 (FASTA 다중 레코드 가능).",
-        input_fields=[],
+        input_fields=[
+            InputField(
+                name="num_recycles",
+                label="Recycle 횟수",
+                field_type="number",
+                minimum=1,
+                helper="비워두면 워커 기본값 사용. 늘리면 정확도가 오를 수 있지만 느려집니다.",
+            ),
+            InputField(
+                name="chunk_size",
+                label="Chunk 크기 (메모리)",
+                field_type="number",
+                minimum=1,
+                helper="긴 시퀀스의 GPU 메모리 사용량을 줄입니다 (결과에는 영향 없음). 비워두면 워커 기본값 사용.",
+            ),
+        ],
         supports_sequence=True,
         preview_kind="protein",
     ),

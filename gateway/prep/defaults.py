@@ -21,9 +21,19 @@ from typing import Any
 #     a user-supplied value always wins.
 #
 # Deliberately NOT pinned here (worker param names unverified or not overridable
-# from the gateway): ESMFold recycles, RFD3 diffusion/partial_t internals, and
-# DiffDock inference_steps/samples_per_complex (those live in the worker-side
-# default_inference_args.yaml). Revisit once the worker source is confirmed.
+# from the gateway): RFD3 diffusion internals, and DiffDock
+# inference_steps/samples_per_complex -- confirmed live 2026-08-10 that
+# appending --samples_per_complex=N to cmd has NO effect (the worker's
+# default_inference_args.yaml value wins regardless); fixing this needs a
+# change to the worker wrapper on the GPU host, which this repo does not
+# vendor. Do not add UI fields for these until that's fixed, or they'll look
+# like they work and silently do nothing.
+#
+# ESMFold's num_recycles/chunk_size ARE verified (2026-08-10, live against the
+# real worker) and exposed as portal InputFields -- see runpod.py. They are not
+# listed in MODEL_DEFAULTS below because there's nothing to silently pin: the
+# UI already surfaces them, so the user's value (or its absence) rides through
+# build_folding_input() unchanged.
 MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     "proteinmpnn": {
         "num_seq_per_target": 1,   # ProteinMPNN default

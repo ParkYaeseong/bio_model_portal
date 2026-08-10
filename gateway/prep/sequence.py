@@ -138,8 +138,10 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
             else:
                 # ColabFold: ':'-joined chains => auto-runs the multimer model.
                 out["sequence"] = ":".join(fasta_seqs)
-    # ColabFold has known, worker-accepted knobs; pin their defaults. ESMFold and
-    # AlphaFold2 are left untouched (worker param names unverified / UI-required).
+    # ColabFold has known, worker-accepted knobs; pin their defaults. ESMFold's
+    # num_recycles/chunk_size are portal InputFields already, so they ride
+    # through in `out` unchanged -- no pinning needed. AlphaFold2 is left
+    # untouched (worker param names unverified / UI-required).
     if model == "ColabFold":
         out = apply_defaults(out, "colabfold")
     out.pop("input_archive", None)

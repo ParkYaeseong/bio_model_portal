@@ -61,9 +61,19 @@ def test_colabfold_pins_defaults():
 
 
 def test_esmfold_has_no_pinned_numeric_defaults():
-    # ESMFold worker param names are unverified; do not inject keys it may reject.
+    # ESMFold does not take ColabFold's knobs (different worker, different names).
     out = sequence.build_folding_input({"sequence": "MKTAYIAK"}, model="ESMFold")
     assert "num_recycle" not in out and "num_models" not in out
+
+
+def test_esmfold_forwards_its_own_recycle_and_chunk_size_knobs():
+    # Verified live against the real worker: num_recycles/chunk_size change its
+    # output (recycle count) and memory footprint (chunk_size) respectively.
+    out = sequence.build_folding_input(
+        {"sequence": "MKTAYIAK", "num_recycles": "1", "chunk_size": "64"}, model="ESMFold"
+    )
+    assert out["num_recycles"] == "1"
+    assert out["chunk_size"] == "64"
 
 
 def test_alphafold_not_overridden_by_colabfold_defaults():
