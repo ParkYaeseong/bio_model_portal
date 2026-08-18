@@ -27,7 +27,7 @@ bio_model_portal/
    │  RUNPOD_BASE=http://127.0.0.1:8500/v2
 [gateway          (FastAPI :8500)]   ── /v2/{endpoint}/run, /status 를 RunPod 형식으로 제공
    │
-[로컬 HTTP 워커들]  bioemu / esmfold / colabfold / rfdiffusion / proteinmpnn / mmseqs / rosetta_relax / esmfold2 ...
+[로컬 HTTP 워커들]  bioemu / esmfold / colabfold / alphafold3 / boltz2 / rfdiffusion / proteinmpnn / antifold / mmseqs / rosetta_relax / esmfold2 ...
 ```
 
 포털 백엔드는 원래 RunPod 클라우드(`https://api.runpod.ai/v2`)를 호출하도록 만들어졌지만,
@@ -35,17 +35,51 @@ bio_model_portal/
 
 ## 제공 파이프라인
 
+UI의 파이프라인 선택 화면은 아래 4개 그룹으로 묶여 있고, 상단 필터 칩으로 그룹별로
+좁혀 볼 수 있습니다. 그룹/설명/태그는 `portal/backend/app/runpod.py` 의
+`PIPELINE_CATEGORIES` + `PipelineDefinition` 한 곳에서만 정의되며, 프론트엔드는
+`/api/pipelines` 응답을 그대로 렌더링합니다 (프론트에 모델 목록을 하드코딩하지 않음).
+
+**구조 예측**
+
 | 파이프라인 | 백엔드 | 비고 |
 |---|---|---|
+| AlphaFold2 | RunPod 클라우드(옵션) | MSA 기반 표준 예측, 단량체/멀티머 |
+| ColabFold | 로컬 워커 | AlphaFold2 + 로컬 MSA, AF2보다 빠름 |
+| AlphaFold3 | 로컬 워커 | 리간드·핵산 포함 복합체. **비상업 연구용**(DeepMind AF3 파라미터 라이선스) |
+| Boltz-2 | 로컬 워커 | 리간드(SMILES) 공동 접힘 + 결합 친화도 예측. 기본은 MSA 없는 단일 서열 모드 |
+| ESMFold | 로컬 워커 | MSA 없이 단일 서열 고속 예측 |
+| ESMFold2 | Biohub API | 사용자별 API 키, `workers/esmfold2_http_worker.py`. ⚠️ `ESMFOLD2_ENDPOINT_ID` 미설정 시 실행 불가 |
+
+**단백질 디자인**
+
+| 파이프라인 | 백엔드 | 비고 |
+|---|---|---|
+| RFdiffusion (RFD3) | 로컬 워커 | 신규/모티프/바인더 백본 디자인 |
+| ProteinMPNN | 로컬 워커 | 시퀀스 디자인(inverse folding), 항체 CDR 마스킹 모드 포함 |
+| AntiFold | 로컬 워커 | 항체 전용 inverse folding, CDR/FR 재설계 |
+
+**도킹 · 동역학 · 정제**
+
+| 파이프라인 | 백엔드 | 비고 |
+|---|---|---|
+| DiffDock | 로컬 워커 | 단백질-리간드 도킹, 순위별 포즈 |
 | BioEmu | 로컬 워커 | 백본 구조 앙상블 |
-| ESMFold | 로컬 워커 | 단일 시퀀스 구조 예측 |
-| ESMFold2 | Biohub API | 사용자별 API 키, `workers/esmfold2_http_worker.py` |
-| ColabFold | 로컬 워커 | AlphaFold2 + 로컬 MSA |
-| RFdiffusion (RFD3) | 로컬 워커 | 신규/모티프/바인더 디자인 |
-| ProteinMPNN | 로컬 워커 | 시퀀스 디자인 |
-| MMseqs2 | 로컬 워커 | 검색/MSA |
-| Rosetta Relax | 로컬 워커 | 구조 완화 |
-| AlphaFold2 / DiffDock / PHASTEST | RunPod 클라우드(옵션) | 별도 엔드포인트 ID 필요 |
+| Rosetta Relax | 로컬 워커 | 구조 완화(FastRelax) |
+
+**서열 · 유전체 분석**
+
+| 파이프라인 | 백엔드 | 비고 |
+|---|---|---|
+| MMseqs2 | 로컬 워커 | 로컬 UniRef 검색/MSA 생성 |
+| PHASTEST | RunPod 클라우드(옵션) | 유전체 프로파지 탐지/기능 리포트 |
+
+백엔드 구분은 `gateway/endpoints.yaml` 이 기준입니다 (`worker_url` = 로컬 워커,
+`runpod_endpoint_id` = RunPod). 현재 RunPod 경유는 AlphaFold2·PHASTEST 둘뿐이고,
+각각 별도 엔드포인트 ID가 필요합니다. 로컬 워커는 모두 GPU 호스트
+`211.188.35.221` 의 포트로 붙습니다 — 새 워커 포트를 추가할 때는 NCP ACG에
+inbound 허용 규칙을 함께 넣어야 합니다(누락 시 연결이 거부가 아니라 **타임아웃**으로
+나타납니다).
 
 ## 빠른 실행 (개발)
 
