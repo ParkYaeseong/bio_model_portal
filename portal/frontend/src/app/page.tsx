@@ -725,10 +725,60 @@ function PipelineSelector({ pipelines, categories, selected, onSelect }: Pipelin
     return sections;
   }, [pipelines, categories]);
 
+  // A filter rail across the top, mirroring the main KBF portal: "전체" plus one
+  // chip per section, and clicking the active chip toggles back to 전체.
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+
+  // A section that empties out (or a stale key after the catalog changes) would
+  // otherwise strand the user on a blank grid.
+  useEffect(() => {
+    if (activeCategory && !groups.some((section) => section.category.key === activeCategory)) {
+      setActiveCategory(null);
+    }
+  }, [groups, activeCategory]);
+
+  const visibleGroups = activeCategory
+    ? groups.filter((section) => section.category.key === activeCategory)
+    : groups;
+
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-slate-900">파이프라인 선택</h2>
-      {groups.map(({ category, items }) => (
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-2 text-lg font-semibold text-slate-900">파이프라인 선택</h2>
+        <button
+          type="button"
+          aria-pressed={activeCategory === null}
+          onClick={() => setActiveCategory(null)}
+          className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+            activeCategory === null
+              ? "border-brand-500 bg-brand-500 text-white"
+              : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"
+          }`}
+        >
+          전체
+          <span className="ml-1.5 text-xs opacity-70">{pipelines.length}</span>
+        </button>
+        {groups.map(({ category, items }) => {
+          const isActive = activeCategory === category.key;
+          return (
+            <button
+              key={category.key}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => setActiveCategory(isActive ? null : category.key)}
+              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                isActive
+                  ? "border-brand-500 bg-brand-500 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"
+              }`}
+            >
+              {category.label}
+              <span className="ml-1.5 text-xs opacity-70">{items.length}</span>
+            </button>
+          );
+        })}
+      </div>
+      {visibleGroups.map(({ category, items }) => (
         <section key={category.key} className="space-y-3">
           <div className="flex items-baseline gap-2">
             <h3 className="text-sm font-semibold text-slate-700">{category.label}</h3>
