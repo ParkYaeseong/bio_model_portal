@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     colabfold_endpoint_id: str | None = Field(default=None, env="COLABFOLD_ENDPOINT_ID")
     alphafold3_endpoint_id: str | None = Field(default=None, env="ALPHAFOLD3_ENDPOINT_ID")
     antifold_endpoint_id: str | None = Field(default=None, env="ANTIFOLD_ENDPOINT_ID")
+    boltz2_endpoint_id: str | None = Field(default=None, env="BOLTZ2_ENDPOINT_ID")
 
     openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")

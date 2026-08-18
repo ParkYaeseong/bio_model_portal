@@ -123,6 +123,21 @@ def package_af3(output: dict) -> str:
     return _build(build)
 
 
+def package_boltz(output: dict) -> str:
+    """Boltz-2: PDB plus confidence scores, and an affinity JSON when the
+    request included a ligand with predict_affinity=true. The worker already
+    lifts the interesting fields into `scores`/`affinity` at the top level, so
+    output.json alone is useful; this just also materializes the structure."""
+    def build(tar: tarfile.TarFile) -> None:
+        _add_raw_json(tar, output)
+        pdb = output.get("ranked_0_pdb")
+        if isinstance(pdb, str) and pdb.strip():
+            _add_text(tar, "boltz_model_0.pdb", pdb)
+        _add_streams(tar, output)
+
+    return _build(build)
+
+
 def package_proteinmpnn(output: dict) -> str:
     def build(tar: tarfile.TarFile) -> None:
         _add_raw_json(tar, output)
@@ -267,6 +282,7 @@ PACKAGERS: dict[str, Callable[[dict], str]] = {
     "esmfold2": package_esmfold2,
     "colabfold": package_colabfold,
     "af3": package_af3,
+    "boltz": package_boltz,
     "proteinmpnn": package_proteinmpnn,
     "rfd3": package_rfd3,
     "mmseqs": package_mmseqs,

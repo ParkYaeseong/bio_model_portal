@@ -40,6 +40,11 @@ def test_alphafold3_multichain_pdb_upload_keeps_every_chain():
     assert ":" in out["sequence"]
 
 
+def test_boltz2_multichain_pdb_upload_keeps_every_chain():
+    out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="Boltz2")
+    assert ":" in out["sequence"]
+
+
 def test_esmfold_multichain_pdb_upload_still_takes_only_the_longest_chain():
     # ESMFold can't fold a ':'-joined complex -- must keep the old behavior.
     out = sequence.build_folding_input({"input_archive": _multichain_pdb_archive()}, model="ESMFold")
@@ -246,6 +251,29 @@ def test_af2_user_flag_wins_over_knob():
     # knob is skipped because the user typed the flag explicitly
     assert out["alphafold_extra_flags"].count("--models_to_relax") == 1
     assert "--models_to_relax=none" in out["alphafold_extra_flags"]
+
+
+def test_boltz2_adapter_coerces_select_bools_and_keeps_ligand_smiles():
+    from adapters import adapter_boltz
+    out = adapter_boltz(
+        {
+            "sequence": "MKTAYIAKQR",
+            "ligand_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+            "predict_affinity": "true",
+            "use_msa_server": "false",
+        }
+    )
+    assert out["predict_affinity"] is True
+    assert out["use_msa_server"] is False
+    assert out["ligand_smiles"] == "CC(=O)Oc1ccccc1C(=O)O"
+    assert out["sequence"] == "MKTAYIAKQR"
+
+
+def test_boltz2_adapter_defaults_when_bool_fields_absent():
+    from adapters import adapter_boltz
+    out = adapter_boltz({"sequence": "MKTAYIAKQR"})
+    assert "predict_affinity" not in out
+    assert "use_msa_server" not in out
 
 
 def test_af2_adapter_multimer_archive_preserved_with_flags():

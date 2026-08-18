@@ -560,6 +560,74 @@ PIPELINES: dict[str, PipelineDefinition] = {
         supports_sequence=True,
         preview_kind="protein",
     ),
+    "boltz2": PipelineDefinition(
+        key="boltz2",
+        label="Boltz-2",
+        description="리간드와 함께 접고 결합 친화도까지 예측합니다.",
+        endpoint_attr="boltz2_endpoint_id",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 리간드를 함께 접으려면 아래에 SMILES를 입력하세요.",
+        input_fields=[
+            InputField(
+                name="ligand_smiles",
+                label="리간드 SMILES (선택)",
+                field_type="text",
+                placeholder="CC(=O)Oc1ccccc1C(=O)O",
+                helper="입력하면 단백질-리간드 복합체를 함께 접습니다 (Boltz-2의 핵심 기능). 비워두면 단백질(복합체)만 예측합니다.",
+            ),
+            InputField(
+                name="predict_affinity",
+                label="결합 친화도(affinity) 예측",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (기본)"},
+                    {"value": "true", "label": "예 (리간드 SMILES 필요)"},
+                ],
+                helper="리간드 SMILES를 입력한 경우에만 동작합니다. 예측값은 결과의 affinity 항목에 담깁니다.",
+            ),
+            InputField(
+                name="use_msa_server",
+                label="MSA 사용",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (단일 서열, 기본, 빠름)"},
+                    {"value": "true", "label": "예 (Boltz MSA 서버 검색, 느림)"},
+                ],
+                helper="기본은 MSA 없이 도는 빠른 모드입니다 (ESMFold와 같은 용도의 빠른 필터). 정확도를 높이려면 MSA 사용을 켜세요.",
+            ),
+            InputField(
+                name="recycling_steps",
+                label="Recycle 횟수",
+                field_type="number",
+                placeholder="3",
+                minimum=1,
+                helper="비워두면 기본값 3.",
+            ),
+            InputField(
+                name="sampling_steps",
+                label="Diffusion 샘플링 스텝",
+                field_type="number",
+                placeholder="200",
+                minimum=1,
+                helper="비워두면 기본값 200.",
+            ),
+            InputField(
+                name="diffusion_samples",
+                label="Diffusion 샘플 수",
+                field_type="number",
+                placeholder="1",
+                minimum=1,
+                helper="비워두면 기본값 1.",
+            ),
+            InputField(
+                name="seed",
+                label="Random seed",
+                field_type="number",
+                helper="비워두면 시드 없이 실행됩니다 (매번 결과가 조금씩 달라질 수 있음).",
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="protein",
+    ),
 }
 
 

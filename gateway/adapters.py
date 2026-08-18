@@ -80,6 +80,18 @@ def adapter_af3(payload: dict) -> dict:
     return sequence.build_folding_input(payload, model="AlphaFold3")
 
 
+def adapter_boltz(payload: dict) -> dict:
+    from prep import sequence
+    out = sequence.build_folding_input(payload, model="Boltz2")
+    # A <select> sends "true"/"false" strings; a naive `if value:` would treat
+    # the string "false" as truthy (same gotcha proteinmpnn.py/antifold.py
+    # handle for their own boolean-shaped select fields).
+    for key in ("use_msa_server", "predict_affinity"):
+        if isinstance(out.get(key), str):
+            out[key] = out[key].strip().lower() == "true"
+    return out
+
+
 def adapter_alphafold(payload: dict) -> dict:
     from prep import sequence
     out = sequence.build_folding_input(payload, model="AlphaFold2")
@@ -107,6 +119,7 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "colabfold": adapter_colabfold,
     "esmfold": adapter_esmfold,
     "af3": adapter_af3,
+    "boltz": adapter_boltz,
     "alphafold": adapter_alphafold,
     "antifold": adapter_antifold,
     "passthrough": adapter_passthrough,

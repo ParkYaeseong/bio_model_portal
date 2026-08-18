@@ -36,9 +36,9 @@ def sequence_from_structure(payload: dict, *, multimer: bool = False) -> str:
 
     BioEmu/ESMFold sample/fold a single chain, so the default is the longest
     chain (the main protein) — same as before. Multimer-capable models
-    (ColabFold, AlphaFold3) pass multimer=True to instead recover every chain,
-    ':'-joined in file order, so a multi-chain PDB upload doesn't silently
-    collapse to just its longest chain.
+    (ColabFold, AlphaFold3, Boltz2) pass multimer=True to instead recover every
+    chain, ':'-joined in file order, so a multi-chain PDB upload doesn't
+    silently collapse to just its longest chain.
     """
     from bio import pdb as _pdb  # vendored, pure stdlib
     from . import structure
@@ -143,7 +143,7 @@ def build_folding_input(payload: dict, *, model: str) -> dict:
         # multimer path is a separate FASTA-archive/'/' convention entirely —
         # feeding it a colon-joined string here would just fail its own
         # validation, so both keep the old longest-chain-only extraction.
-        seq = sequence_from_structure(out, multimer=model in ("ColabFold", "AlphaFold3"))
+        seq = sequence_from_structure(out, multimer=model in ("ColabFold", "AlphaFold3", "Boltz2"))
         if seq:
             out["sequence"] = seq
         elif model == "AlphaFold2" and _archive_has_fasta(out.get("input_archive")):

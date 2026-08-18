@@ -52,6 +52,13 @@ endpoints:
     worker_url: http://211.188.35.221:18111
     packager: proteinmpnn
     adapter: antifold
+  # Boltz-2: fast structure prediction (single-sequence, no MSA by default)
+  # plus optional protein-ligand co-folding and binding-affinity prediction.
+  # Requires the NCP ACG to allow inbound TCP 18112 on the worker host.
+  boltz2-local:
+    worker_url: http://211.188.35.221:18112
+    packager: boltz
+    adapter: boltz
 
   # RunPod serverless passthrough (no local GPU worker for these models)
   alphafold-local:
