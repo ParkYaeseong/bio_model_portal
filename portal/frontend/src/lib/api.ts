@@ -157,7 +157,14 @@ export async function fetchContigSuggestions(file: File, token: string): Promise
 
 export interface PipelineResponse {
   retentionDays: number;
+  categories?: PipelineCategory[];
   pipelines: PipelineMeta[];
+}
+
+export interface PipelineCategory {
+  key: string;
+  label: string;
+  blurb: string;
 }
 
 export interface PipelineMeta {
@@ -165,6 +172,8 @@ export interface PipelineMeta {
   label: string;
   description: string;
   instructions: string;
+  category?: string;
+  tags?: string[];
   supportsSequence: boolean;
   requiresArchive: boolean;
   previewKind: string;

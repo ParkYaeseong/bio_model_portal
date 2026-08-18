@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ def list_models(db: Session, user: models.User, arguments: dict) -> dict:
     models_out = [
         {
             "key": p.key, "label": p.label, "description": p.description,
+            "category": p.category, "tags": p.tags, "instructions": p.instructions,
             "supports_sequence": p.supports_sequence, "requires_archive": p.requires_archive,
             "input_fields": [_field(f) for f in p.input_fields],
         }

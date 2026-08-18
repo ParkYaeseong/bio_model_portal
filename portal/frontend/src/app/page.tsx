@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 
 import {
   PipelineMeta,
+  PipelineCategory,
   JobResponse,
   ContigOption,
   AuthError,
@@ -247,6 +248,7 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
 
   const retentionDays = pipelineData?.retentionDays ?? 7;
   const pipelines = useMemo(() => pipelineData?.pipelines ?? [], [pipelineData]);
+  const categories = useMemo(() => pipelineData?.categories ?? [], [pipelineData]);
   const selectedPipeline = pipelines.find((p) => p.key === selectedPipelineKey) ?? pipelines[0];
   const selectedJob = useMemo(() => jobs?.find((job) => job.id === selectedJobId) ?? jobs?.[0], [jobs, selectedJobId]);
 
@@ -632,7 +634,7 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
       <section className="mx-auto max-w-7xl px-6 pb-24">
         <div className="grid gap-8 lg:grid-cols-[1.2fr,0.8fr]">
           <div className="space-y-8">
-            <PipelineSelector selected={selectedPipeline?.key} pipelines={pipelines} onSelect={setSelectedPipelineKey} />
+            <PipelineSelector selected={selectedPipeline?.key} pipelines={pipelines} categories={categories} onSelect={setSelectedPipelineKey} />
             {selectedPipeline && (
               <SubmissionPanel
                 pipeline={selectedPipeline}
@@ -694,43 +696,80 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
 
 type PipelineSelectorProps = {
   pipelines: PipelineMeta[];
+  categories: PipelineCategory[];
   selected?: string;
   onSelect: (key: string) => void;
 };
 
-function PipelineSelector({ pipelines, selected, onSelect }: PipelineSelectorProps) {
-  const copyMap: Record<string, { description: string; instructions: string }> = {
-    alphafold: {
-      description: "단백질 구조 예측",
-      instructions: "FASTA 서열을 붙여 넣거나 ZIP으로 묶어서 업로드하고 모델/DB 옵션을 선택하세요.",
-    },
-    diffdock: {
-      description: "리간드 도킹/포즈 예측",
-      instructions: "수용체 PDB와 리간드 SDF/SMILES를 업로드하면 여러 복합체를 한 번에 도킹합니다.",
-    },
-    phastest: {
-      description: "PHASTEST 바이러스 분석",
-      instructions: "유전체 FASTA·Contig·GenBank 데이터를 넣어 기능 리포트와 주석을 생성합니다.",
-    },
-  };
+function PipelineSelector({ pipelines, categories, selected, onSelect }: PipelineSelectorProps) {
+  // Group the flat pipeline list into the sections the backend declares. Anything
+  // whose category is unknown falls into a trailing "기타" section so a newly added
+  // pipeline can never disappear from the picker.
+  const groups = useMemo(() => {
+    const known = categories.length
+      ? categories
+      : [{ key: "other", label: "기타", blurb: "" }];
+    const buckets = new Map<string, PipelineMeta[]>(known.map((c) => [c.key, []]));
+    const leftovers: PipelineMeta[] = [];
+    for (const pipeline of pipelines) {
+      const bucket = pipeline.category ? buckets.get(pipeline.category) : undefined;
+      if (bucket) bucket.push(pipeline);
+      else leftovers.push(pipeline);
+    }
+    const sections = known
+      .map((category) => ({ category, items: buckets.get(category.key) ?? [] }))
+      .filter((section) => section.items.length > 0);
+    if (leftovers.length) {
+      sections.push({ category: { key: "__rest", label: "기타", blurb: "" }, items: leftovers });
+    }
+    return sections;
+  }, [pipelines, categories]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h2 className="text-lg font-semibold text-slate-900">파이프라인 선택</h2>
-      <div className="grid gap-4 md:grid-cols-3">
-        {pipelines.map((pipeline) => (
-          <button
-            key={pipeline.key}
-            onClick={() => onSelect(pipeline.key)}
-            className={`rounded-2xl border p-4 text-left transition ${
-              selected === pipeline.key ? "border-brand-500 bg-brand-50" : "border-slate-200 bg-white hover:border-brand-200"
-            }`}
-          >
-            <p className="text-sm font-semibold text-brand-600">{pipeline.label}</p>
-            <p className="mt-1 text-base font-semibold text-slate-900">{copyMap[pipeline.key]?.description || pipeline.description}</p>
-            <p className="mt-2 text-sm text-slate-500">{copyMap[pipeline.key]?.instructions || pipeline.instructions}</p>
-          </button>
-        ))}
-      </div>
+      {groups.map(({ category, items }) => (
+        <section key={category.key} className="space-y-3">
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-sm font-semibold text-slate-700">{category.label}</h3>
+            {category.blurb && <p className="text-xs text-slate-400">{category.blurb}</p>}
+            <span className="ml-auto text-xs text-slate-400">{items.length}</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {items.map((pipeline) => {
+              const isSelected = selected === pipeline.key;
+              return (
+                <button
+                  key={pipeline.key}
+                  onClick={() => onSelect(pipeline.key)}
+                  className={`rounded-2xl border p-4 text-left transition ${
+                    isSelected
+                      ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500"
+                      : "border-slate-200 bg-white hover:border-brand-300 hover:shadow-sm"
+                  }`}
+                >
+                  <p className="text-base font-semibold text-slate-900">{pipeline.label}</p>
+                  <p className="mt-1 text-sm leading-snug text-slate-500">{pipeline.description}</p>
+                  {pipeline.tags && pipeline.tags.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {pipeline.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            isSelected ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -819,7 +858,7 @@ function SubmissionPanel(props: SubmissionPanelProps) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-xl font-semibold text-slate-900">{pipeline.label} 작업 세팅</h3>
-          <p className="text-sm text-slate-500">모든 입력을 확인한 뒤 &quot;작업 실행&quot; 버튼을 누르세요.</p>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">{pipeline.instructions}</p>
         </div>
         <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">{pipeline.previewKind.toUpperCase()}</span>
       </div>

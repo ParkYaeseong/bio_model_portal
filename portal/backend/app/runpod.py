@@ -34,15 +34,32 @@ class PipelineDefinition:
     supports_sequence: bool = False
     requires_archive: bool = False
     preview_kind: str = "generic"
+    # Grouping + scannability for the pipeline picker. `description` is the
+    # one-line card blurb; the long form lives in `instructions`, which the
+    # submission panel shows once a pipeline is selected.
+    category: str = "other"
+    tags: list[str] = field(default_factory=list)
+
+
+# Display order of the pipeline picker sections.
+PIPELINE_CATEGORIES: list[dict[str, str]] = [
+    {"key": "structure", "label": "구조 예측", "blurb": "서열에서 3D 구조를 예측합니다."},
+    {"key": "design", "label": "단백질 디자인", "blurb": "새 백본과 서열을 설계합니다."},
+    {"key": "docking", "label": "도킹 · 동역학 · 정제", "blurb": "결합 포즈, 구조 앙상블, 구조 정제."},
+    {"key": "analysis", "label": "서열 · 유전체 분석", "blurb": "검색, MSA, 유전체 주석."},
+    {"key": "other", "label": "기타", "blurb": ""},
+]
 
 
 PIPELINES: dict[str, PipelineDefinition] = {
     "alphafold": PipelineDefinition(
         key="alphafold",
         label="AlphaFold2",
-        description="Predict protein structures and preview them in 3D.",
+        description="MSA 기반 표준 구조 예측. 단량체·멀티머 지원.",
+        category="structure",
+        tags=["MSA", "멀티머", "정확도 우선"],
         endpoint_attr="alphafold_endpoint_id",
-        instructions="Provide a FASTA file/folder or paste the raw sequence.",
+        instructions="FASTA 파일/폴더를 업로드하거나 서열을 붙여넣고, 모델·DB 옵션을 선택하세요.",
         input_fields=[
             InputField(
                 name="model_preset",
@@ -100,9 +117,11 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "diffdock": PipelineDefinition(
         key="diffdock",
         label="DiffDock",
-        description="Run ligand docking jobs and download the ranked poses.",
+        description="단백질-리간드 도킹. 순위별 결합 포즈를 예측합니다.",
+        category="docking",
+        tags=["도킹", "리간드"],
         endpoint_attr="diffdock_endpoint_id",
-        instructions="Upload protein PDBs and ligand files (single sdf or zipped folder).",
+        instructions="수용체 PDB와 리간드 파일(단일 SDF 또는 ZIP 폴더)을 업로드하면 여러 복합체를 한 번에 도킹합니다.",
         input_fields=[],
         requires_archive=True,
         preview_kind="ligand",
@@ -110,9 +129,11 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "phastest": PipelineDefinition(
         key="phastest",
         label="PHASTEST",
-        description="Generate phage functional reports mirroring the current notebook workflow.",
+        description="유전체에서 프로파지를 찾아 기능 리포트를 만듭니다.",
+        category="analysis",
+        tags=["유전체", "리포트"],
         endpoint_attr="phastest_endpoint_id",
-        instructions="Upload the genome FASTA or CSV bundle exported from the helper notebook.",
+        instructions="유전체 FASTA 또는 헬퍼 노트북에서 내보낸 CSV 번들을 업로드하세요.",
         input_fields=[],
         requires_archive=True,
         preview_kind="phage",
@@ -120,7 +141,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "bioemu": PipelineDefinition(
         key="bioemu",
         label="BioEmu",
-        description="단백질 백본의 동적 구조 앙상블을 시퀀스로부터 샘플링합니다.",
+        description="서열에서 동적 구조 앙상블을 샘플링합니다.",
+        category="docking",
+        tags=["앙상블", "오래 걸림"],
         endpoint_attr="bioemu_endpoint_id",
         instructions="단일 체인 아미노산 시퀀스를 입력하세요. 긴 시퀀스는 수 시간이 걸릴 수 있습니다.",
         input_fields=[
@@ -158,7 +181,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "esmfold": PipelineDefinition(
         key="esmfold",
         label="ESMFold",
-        description="Meta의 ESMFold v1로 단일 시퀀스 구조 예측을 수행합니다 (로컬 GPU).",
+        description="MSA 없이 단일 서열로 빠르게 예측 (로컬 GPU).",
+        category="structure",
+        tags=["MSA 없음", "빠름", "단일 서열"],
         endpoint_attr="esmfold_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요 (FASTA 다중 레코드 가능).",
         input_fields=[
@@ -183,7 +208,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "esmfold2": PipelineDefinition(
         key="esmfold2",
         label="ESMFold2",
-        description="Biohub Forge API를 통한 최신 단일 시퀀스 구조 예측. 각 사용자가 자신의 Biohub API 키를 직접 입력합니다.",
+        description="Biohub Forge API 단일 서열 예측 (본인 API 키 필요).",
+        category="structure",
+        tags=["MSA 없음", "외부 API", "API 키 필요"],
         endpoint_attr="esmfold2_endpoint_id",
         instructions="아래에 본인 Biohub API 키와 아미노산 시퀀스를 입력하세요. 키는 요청마다 전달되며 서버에 저장되지 않습니다.",
         input_fields=[
@@ -202,7 +229,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "rfdiffusion": PipelineDefinition(
         key="rfdiffusion",
         label="RFdiffusion (RFD3)",
-        description="백본 디퓨전 디자인 — 신규(unconditional), 모티프 스캐폴딩, 바인더 설계. Atomworks RFD3(Foundry) 백엔드 사용.",
+        description="백본 생성 — 신규 설계, 모티프 스캐폴딩, 바인더.",
+        category="design",
+        tags=["백본 생성", "바인더", "모티프"],
         endpoint_attr="rfdiffusion_endpoint_id",
         instructions=(
             "신규 디자인: 파일 없이 Length에 잔기 수만 입력 (예: 100). "
@@ -250,7 +279,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "proteinmpnn": PipelineDefinition(
         key="proteinmpnn",
         label="ProteinMPNN",
-        description="주어진 백본 구조에 맞는 단백질 시퀀스를 디자인합니다.",
+        description="백본에 맞는 서열 설계 (inverse folding).",
+        category="design",
+        tags=["서열 설계", "PDB 입력"],
         endpoint_attr="proteinmpnn_endpoint_id",
         instructions="하나 이상의 PDB 파일을 업로드하세요. 결과는 FASTA 디자인입니다.",
         input_fields=[
@@ -358,8 +389,10 @@ PIPELINES: dict[str, PipelineDefinition] = {
     ),
     "antifold": PipelineDefinition(
         key="antifold",
-        label="AntiFold (항체 전용)",
-        description="항체 전용 inverse-folding 모델(AntiFold)로 CDR/FR을 재설계합니다. ProteinMPNN 항체 모드의 대안입니다.",
+        label="AntiFold",
+        description="항체 전용 서열 설계 — CDR/FR 재설계.",
+        category="design",
+        tags=["서열 설계", "항체 전용"],
         endpoint_attr="antifold_endpoint_id",
         instructions=(
             "항체 가변 도메인 구조(PDB)를 업로드하세요. IMGT 넘버링은 자동으로 처리되므로 "
@@ -437,7 +470,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "mmseqs": PipelineDefinition(
         key="mmseqs",
         label="MMseqs2",
-        description="로컬 UniRef 데이터베이스에 대한 시퀀스 검색/MSA 생성 (MMseqs2).",
+        description="로컬 UniRef 검색으로 MSA를 생성합니다.",
+        category="analysis",
+        tags=["MSA 생성", "검색"],
         endpoint_attr="mmseqs_endpoint_id",
         instructions="쿼리 시퀀스를 붙여넣으세요 (혹은 FASTA 업로드). UniRef90 검색은 수 분 이상 걸릴 수 있습니다.",
         input_fields=[
@@ -455,7 +490,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "rosetta_relax": PipelineDefinition(
         key="rosetta_relax",
         label="Rosetta Relax",
-        description="Rosetta FastRelax로 백본/사이드체인 충돌을 완화합니다.",
+        description="Rosetta FastRelax로 구조 충돌을 완화합니다.",
+        category="docking",
+        tags=["구조 정제", "PDB 입력"],
         endpoint_attr="rosetta_relax_endpoint_id",
         instructions="완화할 PDB 파일을 업로드하세요.",
         input_fields=[
@@ -480,7 +517,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "colabfold": PipelineDefinition(
         key="colabfold",
         label="ColabFold",
-        description="ColabFold를 통한 AlphaFold2 추론 (로컬 MMseqs2 MSA 사용).",
+        description="AlphaFold2 + 로컬 MMseqs2 MSA. AF2보다 빠릅니다.",
+        category="structure",
+        tags=["MSA", "멀티머", "빠름"],
         endpoint_attr="colabfold_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 여러 FASTA 레코드로 넣으면 각 서열이 독립적으로(배치) 예측됩니다.",
         input_fields=[
@@ -516,10 +555,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "alphafold3": PipelineDefinition(
         key="alphafold3",
         label="AlphaFold3",
-        description=(
-            "AlphaFold3 구조 예측 (자체 GPU 서버, 로컬 유전 데이터베이스 사용). "
-            "비상업적 연구 목적으로만 사용 가능 (DeepMind AF3 파라미터 라이선스)."
-        ),
+        description="AF3 구조 예측. 리간드·핵산 포함 복합체까지.",
+        category="structure",
+        tags=["MSA", "복합체", "비상업 연구용"],
         endpoint_attr="alphafold3_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB).",
         input_fields=[
@@ -564,6 +602,8 @@ PIPELINES: dict[str, PipelineDefinition] = {
         key="boltz2",
         label="Boltz-2",
         description="리간드와 함께 접고 결합 친화도까지 예측합니다.",
+        category="structure",
+        tags=["리간드", "친화도", "MSA 선택"],
         endpoint_attr="boltz2_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 리간드를 함께 접으려면 아래에 SMILES를 입력하세요.",
         input_fields=[
@@ -629,6 +669,32 @@ PIPELINES: dict[str, PipelineDefinition] = {
         preview_kind="protein",
     ),
 }
+
+
+# Display order inside the picker (grouped by `category`, see PIPELINE_CATEGORIES).
+# Anything missing here falls back to PIPELINES insertion order.
+PIPELINE_ORDER: list[str] = [
+    "alphafold",
+    "colabfold",
+    "alphafold3",
+    "boltz2",
+    "esmfold",
+    "esmfold2",
+    "rfdiffusion",
+    "proteinmpnn",
+    "antifold",
+    "diffdock",
+    "bioemu",
+    "rosetta_relax",
+    "mmseqs",
+    "phastest",
+]
+
+
+def ordered_pipelines() -> list[PipelineDefinition]:
+    """PIPELINES sorted for display: PIPELINE_ORDER first, then any newcomers."""
+    ranked = {key: index for index, key in enumerate(PIPELINE_ORDER)}
+    return sorted(PIPELINES.values(), key=lambda p: ranked.get(p.key, len(ranked)))
 
 
 class RunpodClient:
