@@ -487,6 +487,63 @@ PIPELINES: dict[str, PipelineDefinition] = {
         supports_sequence=True,
         preview_kind="generic",
     ),
+    "ppiformer": PipelineDefinition(
+        key="ppiformer",
+        label="PPIformer",
+        description="변이가 결합 친화도를 얼마나 바꾸는지(ΔΔG) 예측합니다.",
+        category="analysis",
+        tags=["결합 ΔΔG", "변이 효과", "복합체 입력"],
+        endpoint_attr="ppiformer_endpoint_id",
+        instructions=(
+            "두 단백질이 결합한 복합체 구조(PDB)를 업로드하고, 평가할 변이를 적으세요. "
+            "값이 낮을수록(음수) 결합이 좋아진다는 뜻입니다."
+        ),
+        input_fields=[
+            InputField(
+                name="mutations",
+                label="변이 목록",
+                field_type="textarea",
+                required=True,
+                placeholder="YH33W\nDH31K, YH33F",
+                helper=(
+                    "형식은 <원래잔기><체인><번호><바뀔잔기> (예: YH33W = H체인 33번 Y→W). "
+                    "한 줄이 후보 하나입니다. 한 줄에 쉼표나 공백으로 여러 개를 적으면 "
+                    "그 변이들을 모두 가진 조합 후보 하나로 평가합니다."
+                ),
+            ),
+        ],
+        requires_archive=True,
+        preview_kind="generic",
+    ),
+    "anarcii": PipelineDefinition(
+        key="anarcii",
+        label="ANARCII",
+        description="항체 서열에 IMGT 번호를 매기고 CDR 구간을 찾습니다.",
+        category="analysis",
+        tags=["항체 전용", "IMGT 번호", "CDR 검출"],
+        endpoint_attr="anarcii_endpoint_id",
+        instructions=(
+            "항체 가변 도메인 서열을 붙여넣으세요. FASTA를 붙여넣으면 레코드별로 각각 "
+            "번호를 매깁니다. 도메인 종류(VH/VL/VHH)와 CDR 구간은 자동으로 판별됩니다."
+        ),
+        input_fields=[
+            InputField(
+                name="scfv",
+                label="scFv (VH-링커-VL 단일 서열)",
+                field_type="select",
+                options=[
+                    {"value": "", "label": "아니오 (기본) - 서열 하나가 도메인 하나"},
+                    {"value": "true", "label": "예 - 한 서열에서 VH와 VL을 모두 찾기"},
+                ],
+                helper=(
+                    "scFv처럼 두 도메인이 링커로 이어진 단일 서열이면 '예'를 고르세요. "
+                    "보통의 VH/VL/VHH 서열은 비워두면 됩니다."
+                ),
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="generic",
+    ),
     "rosetta_relax": PipelineDefinition(
         key="rosetta_relax",
         label="Rosetta Relax",
@@ -687,6 +744,8 @@ PIPELINE_ORDER: list[str] = [
     "bioemu",
     "rosetta_relax",
     "mmseqs",
+    "anarcii",
+    "ppiformer",
     "phastest",
 ]
 

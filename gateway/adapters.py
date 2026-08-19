@@ -103,6 +103,16 @@ def adapter_antifold(payload: dict) -> dict:
     return antifold.build_input(payload)
 
 
+def adapter_anarcii(payload: dict) -> dict:
+    from prep import anarcii
+    return anarcii.build_input(payload)
+
+
+def adapter_ppiformer(payload: dict) -> dict:
+    from prep import ppiformer
+    return ppiformer.build_input(payload)
+
+
 def adapter_passthrough(payload: dict) -> dict:
     out = dict(payload)
     out.pop("input_archive", None)
@@ -122,6 +132,8 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "boltz": adapter_boltz,
     "alphafold": adapter_alphafold,
     "antifold": adapter_antifold,
+    "anarcii": adapter_anarcii,
+    "ppiformer": adapter_ppiformer,
     "passthrough": adapter_passthrough,
 }
 

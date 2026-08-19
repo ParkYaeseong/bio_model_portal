@@ -52,6 +52,24 @@ endpoints:
     worker_url: http://211.188.35.221:18111
     packager: proteinmpnn
     adapter: antifold
+  # ANARCII: antibody numbering (IMGT/Kabat/Chothia/Martin/Aho). CPU only, no
+  # weights of its own beyond the numbering model. Pure JSON in/out - takes
+  # {"sequences": {...}} or a list of {"id", "sequence"} - so it needs no file
+  # marshalling and reuses the passthrough adapter, same as binder-score.
+  anarcii-local:
+    worker_url: http://211.188.35.221:18109
+    packager: generic
+    adapter: anarcii
+
+  # PPIformer: mutation-induced binding free-energy change (ddG) for an
+  # interface. Runs on bop behind a round-robin front (18113) over a pool of
+  # worker processes - PPIformer serialises predictions in-process, so capacity
+  # is processes, but externally it is one port like every other worker.
+  ppiformer-local:
+    worker_url: http://211.188.35.221:18113
+    packager: generic
+    adapter: ppiformer
+
   # Boltz-2: fast structure prediction (single-sequence, no MSA by default)
   # plus optional protein-ligand co-folding and binding-affinity prediction.
   # Requires the NCP ACG to allow inbound TCP 18112 on the worker host.
