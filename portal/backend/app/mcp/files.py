@@ -133,12 +133,20 @@ def _entry_bytes(user, entry: dict, label: str) -> tuple[str, bytes]:
     present = [k for k in _CONTENT_KEYS if str(entry.get(k) or "").strip()]
     if not present:
         given = ", ".join(f"{k}={entry[k]!r}" for k in sorted(entry)) or "(empty object)"
+        # Name the caller's actual workspace directory here: this is usually the
+        # first error an agent sees, and telling it to `cp` the file into a real
+        # path is what stops it from base64-ing a multi-megabyte structure
+        # through its own context one chunk at a time.
         raise ValueError(
             f"{label}: no file content. 'name' is just a filename — the server "
-            f"cannot read a local path from it. Provide the content one of these "
-            f"ways: base64=<base64 of the file>, text=<file text, for PDB/CIF/"
-            f"FASTA/SDF>, path=<file in your server workspace>, or file_id=<id "
-            f"returned by upload_file>. Got: {given}"
+            f"cannot read a local path from it. Supply the content one of these "
+            f"ways:\n"
+            f"  1. BEST if you can run shell on this server: "
+            f"`cp <your file> {workspace_dir(user)}/` then pass "
+            f'{{"path": "<file name>"}} — no encoding, no token cost.\n'
+            f'  2. Small text file (PDB/CIF/FASTA/SDF): {{"text": "<file text>"}}.\n'
+            f'  3. Otherwise upload once with upload_file and pass {{"file_id": ...}}.\n'
+            f"Got: {given}"
         )
 
     name = entry.get("name")

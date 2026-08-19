@@ -17,6 +17,9 @@ _TEXT_SUFFIXES = {
     ".pdb", ".cif", ".mmcif", ".fasta", ".fa", ".faa", ".fna", ".sdf", ".a3m",
 }
 _DEFAULT_READ_BYTES = 200_000
+# Above this, inlining/chunking a file costs more context than it is worth
+# (base64 is 4/3 the bytes, and ~1 token per 3 chars); tell the caller so.
+_INLINE_HINT_BYTES = 64 * 1024
 
 
 def _field(f) -> dict:
@@ -214,9 +217,17 @@ def upload_file(db: Session, user: models.User, arguments: dict) -> dict:
             user, name, data, append=bool(arguments.get("append")))
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, **stored,
-            "usage": f"pass files=[{{\"file_id\": \"{stored['file_id']}\"}}] to run_model. "
-                     "For a large file, call upload_file repeatedly with append=true."}
+    out = {"ok": True, **stored,
+           "usage": f"pass files=[{{\"file_id\": \"{stored['file_id']}\"}}] to run_model."}
+    if "path" not in sources and len(data) > _INLINE_HINT_BYTES:
+        out["tip"] = (
+            f"that was {len(data)} bytes sent inline (~{len(data) * 4 // 9000}k tokens as "
+            f"base64). If you can run shell on this server, stop encoding: "
+            f"`cp <file> {mcp_files.workspace_dir(user)}/` and pass "
+            f'files=[{{"path": "<file name>"}}] instead. Chunking with append=true does '
+            f"not reduce the total cost."
+        )
+    return out
 
 
 def list_files(db: Session, user: models.User, arguments: dict) -> dict:
@@ -250,11 +261,16 @@ _FILE_ITEM = {
     ],
 }
 _FILES_DESC = (
-    "Input files. EVERY entry must carry real content: base64, text (for text "
-    "formats), path (a file in your server workspace), or file_id (from "
-    "upload_file). A 'name' alone is rejected — the server cannot read a local "
-    "path from it. For anything large, call upload_file first (repeatedly with "
-    "append=true for big files) and pass file_id."
+    "Input files. EVERY entry must carry real content — a 'name' alone is "
+    "rejected, because the server cannot read a local path from it. Pick the "
+    "cheapest form that applies, in this order: (1) if you can run shell "
+    "commands on the portal's own host, copy the file into the workspace "
+    "directory that list_files reports and pass {'path': '<file name>'} — this "
+    "costs no tokens and no encoding; (2) for a SMALL text file (PDB/CIF/FASTA/"
+    "SDF under ~50 KB) pass {'text': '<file text>'}; (3) otherwise upload it "
+    "once with upload_file and pass {'file_id': ...}. Never base64 a large "
+    "structure into this call: a 200 KB PDB is ~75k tokens of base64, and "
+    "splitting it into chunks costs exactly the same."
 )
 
 # name -> (callable, description, json input schema)
@@ -335,11 +351,14 @@ TOOLS = {
     }),
     "upload_file": (upload_file,
         "Stage an input file on the server ONCE and get a file_id back, then run models "
-        "with files=[{\"file_id\": \"...\"}]. Preferred over inlining a large base64 blob in "
-        "run_model: send text=<file text> for PDB/CIF/FASTA/SDF, or base64=<bytes>, or "
-        "path=<file already on this server>. For a big file, call it again with the same "
-        "name and append=true to add each chunk; the returned size_bytes/sha256 let you "
-        "verify the upload arrived intact.", {
+        "with files=[{\"file_id\": \"...\"}]. CHECK FIRST whether you can run shell on the "
+        "portal's own host: if so, do NOT use this tool — `cp` the file into the directory "
+        "list_files reports and pass files=[{\"path\": \"<file name>\"}], which costs "
+        "nothing. Use this tool when your client is remote: text=<file text> for a text "
+        "format, base64=<bytes> otherwise, or path=<file already inside your workspace>. "
+        "Chunking (same name + append=true) makes a big upload survivable, NOT cheaper — "
+        "the token cost is the same total, so only base64 a file you genuinely cannot "
+        "reach any other way. The returned size_bytes/sha256 verify it arrived intact.", {
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "file name to store, e.g. 'ab.pdb'"},
@@ -352,7 +371,8 @@ TOOLS = {
     }),
     "list_files": (list_files,
         "List the files you have staged on the server (file_id, size, sha256) and report "
-        "the absolute workspace directory. A client running on the portal's own host can "
-        "write a file into that directory and then pass files=[{\"path\": \"<name>\"}].",
+        "your absolute workspace directory. CALL THIS FIRST when you need to feed a local "
+        "file to a model: if you can run shell on the portal's host, `cp` the file into "
+        "workspace_dir and pass files=[{\"path\": \"<name>\"}] instead of encoding it.",
         {"type": "object", "properties": {}}),
 }

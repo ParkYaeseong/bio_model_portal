@@ -288,3 +288,18 @@ def test_download_artifact_lists_options_when_the_name_is_wrong(tmp_path):
         job = _finished_job(db, u, "antifold", [("o.json", out, "table")])
         r = tools.download_artifact(db, u, {"job_id": job.id, "file_name": "nope.json"})
         assert r["ok"] is False and "o.json" in r["error"]
+
+
+def test_large_inline_upload_is_told_to_use_a_path_instead():
+    with SessionLocal() as db:
+        u = _user(db)
+        r = tools.upload_file(db, u, {"name": "big.pdb", "text": "ATOM\n" * 20_000})
+        assert r["ok"] is True
+        assert "cp " in r["tip"] and "path" in r["tip"]
+
+
+def test_small_upload_has_no_cost_tip():
+    with SessionLocal() as db:
+        u = _user(db)
+        r = tools.upload_file(db, u, {"name": "small.pdb", "text": "ATOM\n"})
+        assert "tip" not in r

@@ -204,31 +204,37 @@ export default function McpSettingsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-600">
                 <tr>
-                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","text":"ATOM ..."}`}</td>
-                  <td className="py-2">PDB·CIF·FASTA·SDF 등 텍스트 파일 (권장)</td>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"path":"ab.pdb"}`}</td>
+                  <td className="py-2">
+                    <strong>포털 서버에서 도는 클라이언트는 이것.</strong>{" "}
+                    <span className="font-mono">list_files</span>가 알려주는 본인 워크스페이스 폴더로{" "}
+                    <span className="font-mono">cp</span> 한 뒤 파일명만 넘기면 됩니다 — 인코딩·토큰 비용 없음.
+                  </td>
                 </tr>
                 <tr>
-                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","base64":"..."}`}</td>
-                  <td className="py-2">바이너리 파일</td>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","text":"ATOM ..."}`}</td>
+                  <td className="py-2">50KB 이하 텍스트 파일 (PDB·CIF·FASTA·SDF)</td>
                 </tr>
                 <tr>
                   <td className="py-2 pr-4 font-mono text-xs">{`{"file_id":"ab.pdb"}`}</td>
                   <td className="py-2">
-                    <span className="font-mono">upload_file</span>로 미리 올린 파일. 큰 파일은{" "}
-                    <span className="font-mono">append: true</span>로 나눠 올리고 반환된{" "}
-                    <span className="font-mono">sha256</span>로 무결성을 확인하세요.
+                    원격 클라이언트용. <span className="font-mono">upload_file</span>로 한 번 올리고 재사용,
+                    큰 파일은 <span className="font-mono">append: true</span>로 나눠 올린 뒤 반환된{" "}
+                    <span className="font-mono">sha256</span>로 무결성 확인.
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-2 pr-4 font-mono text-xs">{`{"path":"ab.pdb"}`}</td>
-                  <td className="py-2">
-                    포털 서버에서 도는 클라이언트 전용. <span className="font-mono">list_files</span>가
-                    알려주는 본인 워크스페이스 폴더 안의 파일만 읽습니다.
-                  </td>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","base64":"..."}`}</td>
+                  <td className="py-2">소용량 바이너리 파일</td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+            큰 구조를 base64로 인라인하지 마세요. 227KB PDB는 base64로 약 303KB(≈75k 토큰)이고,
+            조각내서 여러 번 올려도 총 비용은 같습니다. 같은 서버에서 도는 에이전트라면{" "}
+            <span className="font-mono">cp</span> + <span className="font-mono">path</span>가 항상 가장 빠릅니다.
+          </p>
           <p className="mt-4 text-sm text-slate-500">
             결과는 <span className="font-mono">job_result</span>로 파일 목록을 보고{" "}
             <span className="font-mono">download_artifact(job_id, artifact_id)</span>로 내용까지 바로 읽을 수

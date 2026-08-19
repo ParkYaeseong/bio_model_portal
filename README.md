@@ -257,10 +257,14 @@ MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
 
 | 형태 | 용도 |
 |---|---|
-| `{"name": "ab.pdb", "text": "ATOM ..."}` | PDB/CIF/FASTA/SDF 같은 텍스트 포맷 (base64 인코딩 손상 위험 없음) |
-| `{"name": "ab.pdb", "base64": "..."}` | 바이너리/임의 파일 |
-| `{"file_id": "ab.pdb"}` | `upload_file`로 미리 올린 파일 (대용량은 `append=true`로 분할 업로드) |
-| `{"path": "ab.pdb"}` | 서버 워크스페이스(`list_files().workspace_dir`) 안의 파일 |
+| `{"path": "ab.pdb"}` | **포털 호스트에서 도는 클라이언트는 이걸 쓰세요.** `list_files().workspace_dir`로 `cp` 한 뒤 파일명만 넘기면 됨 — 인코딩도 토큰 비용도 0 |
+| `{"name": "ab.pdb", "text": "ATOM ..."}` | ~50KB 이하 텍스트 포맷(PDB/CIF/FASTA/SDF) |
+| `{"file_id": "ab.pdb"}` | `upload_file`로 미리 올린 파일 (원격 클라이언트용, 대용량은 `append=true` 분할) |
+| `{"name": "ab.pdb", "base64": "..."}` | 바이너리 소용량 |
+
+⚠️ **대용량 구조를 base64로 인라인하지 마세요.** 227KB PDB = base64 303KB ≈ 75k 토큰이고,
+청크로 쪼개도 총 비용은 동일합니다. 툴 설명·에러 메시지가 이 순서대로 유도하며, 큰 인라인
+업로드에는 `upload_file`이 실제 워크스페이스 경로가 담긴 `tip`을 함께 반환합니다.
 
 `path`는 기본적으로 **호출자 본인의 워크스페이스 디렉터리**(`STORAGE_ROOT/workspace/<user_id>`)
 안으로만 제한됩니다. 포탈과 같은 호스트에서 도는 클라이언트에 다른 디렉터리를 열어주려면

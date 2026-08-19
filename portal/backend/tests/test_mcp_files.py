@@ -22,10 +22,14 @@ def test_name_only_entry_is_rejected_with_an_actionable_message(tmp_path):
             mcp_files.stage_files(u, [{"name": "data/ab.pdb"}], tmp_path)
         message = str(exc.value)
         assert "no file content" in message
-        assert "not a path" in message or "cannot read a local path" in message
+        assert "cannot read a local path" in message
         # names every accepted way to supply content
-        for key in ("base64", "text", "path", "file_id"):
+        for key in ("text", "path", "file_id", "upload_file"):
             assert key in message
+        # and points at the caller's real workspace dir, so a same-host client
+        # can cp the file there instead of base64-ing it through its context
+        assert str(mcp_files.workspace_dir(u)) in message
+        assert "cp " in message
 
 
 def test_text_entry_is_written_verbatim(tmp_path):
