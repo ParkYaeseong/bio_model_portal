@@ -178,6 +178,37 @@ export default function McpSettingsPage() {
             {buildConfigSnippet(rawToken ?? "")}
           </pre>
         </div>
+
+        {/* Runcell Science runs on each member's own machine: it drives the
+            Claude Code / Codex CLI that person is already signed in to, so one
+            shared copy would mean one shared seat and one shared token. */}
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-slate-900">Runcell Science (로컬 설치)</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            노트북·플롯·분석 코드를 대화로 돌리는 연구용 에이전트입니다. 위 MCP 설정을 붙여넣으면 이
+            포털의 모델 실행·결과 조회 도구(<span className="font-mono">list_models</span>,{" "}
+            <span className="font-mono">run_model</span>, <span className="font-mono">job_result</span> 등)를
+            그대로 씁니다.
+          </p>
+          <p className="mt-3 text-sm text-slate-500">
+            에이전트는 <strong>각자 자기 PC에</strong> 설치합니다. 이미 로그인된 Claude Code / Codex CLI를
+            그대로 사용하므로 별도 API 키가 필요하지 않습니다.
+          </p>
+          <pre className="mt-3 overflow-x-auto rounded-xl bg-slate-900 p-4 font-mono text-xs text-slate-100">
+{`# 1) 설치 (Apache-2.0)
+git clone https://github.com/runcell-ai/runcell-science.git
+cd runcell-science && ./scripts/dev.sh      # http://127.0.0.1:27183
+
+# 2) 과학 skill 추가 (선택)
+npx skills add K-Dense-AI/scientific-agent-skills
+
+# 3) 위 "연결 방법"의 JSON을 Connectors 패널 > Import JSON 에 붙여넣기`}
+          </pre>
+          <p className="mt-3 text-xs text-slate-400">
+            토큰은 계정에 귀속되므로 공유하지 마세요. 사람마다 자기 토큰을 발급해 쓰면 GPU 사용량도
+            각자에게 정확히 기록됩니다.
+          </p>
+        </div>
       </section>
     </main>
   );
