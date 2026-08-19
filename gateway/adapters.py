@@ -36,88 +36,81 @@ def _pick_pdb(files: dict[str, bytes]) -> tuple[str, bytes] | None:
 
 
 def adapter_rosetta_relax(payload: dict) -> dict:
-    if payload.get("pdb_content") or payload.get("input_pdb_content"):
-        return payload
-    files = _extract_archive(payload)
-    pdb = _pick_pdb(files)
-    if not pdb:
-        return payload
-    name, data = pdb
-    out = dict(payload)
-    out["pdb_content"] = data.decode("utf-8", errors="replace")
-    out.setdefault("target_id", name.rsplit("/", 1)[-1].removesuffix(".pdb"))
-    out.pop("input_archive", None)
-    return out
+    from prep import rosetta
+    return rosetta.build_input(payload)
 
 
 def adapter_proteinmpnn(payload: dict) -> dict:
-    if payload.get("pdb_base64") or payload.get("pdb_text") or payload.get("pdb_content"):
-        return payload
-    files = _extract_archive(payload)
-    pdb = _pick_pdb(files)
-    if not pdb:
-        return payload
-    name, data = pdb
-    out = dict(payload)
-    out["pdb_base64"] = base64.b64encode(data).decode("ascii")
-    out.setdefault("pdb_name", name.rsplit("/", 1)[-1].removesuffix(".pdb"))
-    out.pop("input_archive", None)
-    return out
+    from prep import proteinmpnn
+    return proteinmpnn.build_input(payload)
 
 
 def adapter_rfdiffusion(payload: dict) -> dict:
-    out = dict(payload)
-    if not (isinstance(out.get("input_files"), dict) and out["input_files"]):
-        pdb = _pick_pdb(_extract_archive(out))
-        if pdb:
-            _, data = pdb
-            out["input_files"] = {"input.pdb": data.decode("utf-8", errors="replace")}
-    has_input_pdb = isinstance(out.get("input_files"), dict) and "input.pdb" in out["input_files"]
-    if not isinstance(out.get("inputs"), dict):
-        spec: dict[str, Any] = {}
-        contigs = out.pop("contigs", None) or out.pop("contig", None)
-        length = out.pop("length", None)
-        if has_input_pdb:
-            spec["input"] = "input.pdb"
-            if contigs:
-                spec["contig"] = contigs
-            if length:
-                spec["length"] = str(length)
-        else:
-            # Unconditional generation: RFD3 expects `length`, not `contig`.
-            if length:
-                spec["length"] = str(length)
-            elif contigs:
-                spec["length"] = str(contigs)
-        hotspots = out.pop("hotspots", None) or out.pop("hotspot_res", None)
-        if hotspots:
-            spec["hotspots"] = hotspots
-        if spec:
-            out["inputs"] = {"spec-1": spec}
-    out.pop("input_archive", None)
-    return out
+    from prep import rfd3
+    return rfd3.build_input(payload)
+
+
+def adapter_diffdock(payload: dict) -> dict:
+    from prep import diffdock
+    return diffdock.build_input(payload)
 
 
 def adapter_mmseqs(payload: dict) -> dict:
-    out = dict(payload)
-    if out.get("query_fasta"):
-        out.pop("input_archive", None)
-        return out
-    sequence = str(out.pop("sequence", "") or "").strip()
-    if sequence:
-        if not sequence.startswith(">"):
-            sequence = f">query\n{sequence}\n"
-        out["query_fasta"] = sequence
-    else:
-        files = _extract_archive(out)
-        for name, data in files.items():
-            if name.lower().endswith((".fasta", ".fa", ".faa", ".fna")):
-                out["query_fasta"] = data.decode("utf-8", errors="replace")
-                break
-    out.setdefault("task", "search")
-    out.setdefault("target_db", "uniref90")
-    out.pop("input_archive", None)
+    from prep import mmseqs
+    return mmseqs.build_input(payload)
+
+
+def adapter_bioemu(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_bioemu_input(payload)
+
+
+def adapter_colabfold(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="ColabFold")
+
+
+def adapter_esmfold(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="ESMFold")
+
+
+def adapter_af3(payload: dict) -> dict:
+    from prep import sequence
+    return sequence.build_folding_input(payload, model="AlphaFold3")
+
+
+def adapter_boltz(payload: dict) -> dict:
+    from prep import sequence
+    out = sequence.build_folding_input(payload, model="Boltz2")
+    # A <select> sends "true"/"false" strings; a naive `if value:` would treat
+    # the string "false" as truthy (same gotcha proteinmpnn.py/antifold.py
+    # handle for their own boolean-shaped select fields).
+    for key in ("use_msa_server", "predict_affinity"):
+        if isinstance(out.get(key), str):
+            out[key] = out[key].strip().lower() == "true"
     return out
+
+
+def adapter_alphafold(payload: dict) -> dict:
+    from prep import sequence
+    out = sequence.build_folding_input(payload, model="AlphaFold2")
+    return sequence.assemble_alphafold_flags(out)
+
+
+def adapter_antifold(payload: dict) -> dict:
+    from prep import antifold
+    return antifold.build_input(payload)
+
+
+def adapter_anarcii(payload: dict) -> dict:
+    from prep import anarcii
+    return anarcii.build_input(payload)
+
+
+def adapter_ppiformer(payload: dict) -> dict:
+    from prep import ppiformer
+    return ppiformer.build_input(payload)
 
 
 def adapter_passthrough(payload: dict) -> dict:
@@ -130,7 +123,17 @@ ADAPTERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "rosetta_relax": adapter_rosetta_relax,
     "proteinmpnn": adapter_proteinmpnn,
     "rfdiffusion": adapter_rfdiffusion,
+    "diffdock": adapter_diffdock,
     "mmseqs": adapter_mmseqs,
+    "bioemu": adapter_bioemu,
+    "colabfold": adapter_colabfold,
+    "esmfold": adapter_esmfold,
+    "af3": adapter_af3,
+    "boltz": adapter_boltz,
+    "alphafold": adapter_alphafold,
+    "antifold": adapter_antifold,
+    "anarcii": adapter_anarcii,
+    "ppiformer": adapter_ppiformer,
     "passthrough": adapter_passthrough,
 }
 

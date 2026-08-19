@@ -1,10 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import copy
 import csv
 import io
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List
 
@@ -13,7 +14,8 @@ import httpx
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, queue_estimate
+from ..job_control import cancel_active_job as _cancel_active_job
 from ..auth import get_current_user
 from ..database import get_db
 from ..runpod import PIPELINES, RunpodClient, build_pipeline_payload, pipeline_endpoint
@@ -30,18 +32,30 @@ FASTA_SUFFIXES = (".fasta", ".fa", ".fna", ".ffn", ".faa")
 
 @router.get("", response_model=List[JobRead])
 def list_jobs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    jobs = (
-        db.query(models.Job)
-        .filter(models.Job.user_id == current_user.id)
-        .order_by(models.Job.created_at.desc())
-        .all()
-    )
-    return jobs
+    is_admin = getattr(current_user, "is_admin", False)
+    query = db.query(models.Job)
+    if not is_admin:
+        query = query.filter(models.Job.user_id == current_user.id)
+    jobs = query.order_by(models.Job.created_at.desc()).all()
+    # Attach a rough queue-position + ETA to any still-active job. Queue position
+    # counts other users' jobs ahead on the same endpoint (number only).
+    avgs = queue_estimate.average_durations(db)
+    now = datetime.utcnow()
+    out: list[JobRead] = []
+    for job in jobs:
+        read = JobRead.model_validate(job, from_attributes=True)
+        est = queue_estimate.estimate_for_job(db, job, avgs, now)
+        if est:
+            read = read.model_copy(update=est)
+        if is_admin and job.user_id != current_user.id:
+            read = read.model_copy(update={"owner": job.user.username})
+        out.append(read)
+    return out
 
 
 @router.get("/{job_id}", response_model=JobRead)
 def get_job(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    job = _get_job_or_404(db, current_user.id, job_id)
+    job = _get_job_or_404(db, current_user, job_id)
     return job
 
 
@@ -195,15 +209,28 @@ async def create_job(
 
 @router.get("/{job_id}/download")
 def download_archive(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    job = _get_job_or_404(db, current_user.id, job_id)
+    job = _get_job_or_404(db, current_user, job_id)
     if not job.result_archive:
         raise HTTPException(status_code=404, detail="Results are not ready yet.")
     return FileResponse(job.result_archive, filename=Path(job.result_archive).name)
 
 
+@router.post("/{job_id}/cancel", response_model=JobRead)
+def cancel_job(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    job = _get_job_or_404(db, current_user, job_id)
+    _cancel_active_job(job)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.delete("/{job_id}")
 def delete_job(job_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    job = _get_job_or_404(db, current_user.id, job_id)
+    job = _get_job_or_404(db, current_user, job_id)
+    # Deleting an active job must stop its compute first, or it keeps running on
+    # the GPU untracked.
+    _cancel_active_job(job)
     if job.result_dir:
         remove_tree(Path(job.result_dir))
     if job.input_archive_path:
@@ -225,19 +252,18 @@ def download_artifact(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _get_job_or_404(db, current_user.id, job_id)
+    _get_job_or_404(db, current_user, job_id)
     artifact = db.query(models.Artifact).filter(models.Artifact.id == artifact_id, models.Artifact.job_id == job_id).first()
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found.")
     return FileResponse(artifact.file_path, filename=artifact.file_name, media_type=artifact.mime_type or "application/octet-stream")
 
 
-def _get_job_or_404(db: Session, user_id: int, job_id: str) -> models.Job:
-    job = (
-        db.query(models.Job)
-        .filter(models.Job.id == job_id, models.Job.user_id == user_id)
-        .first()
-    )
+def _get_job_or_404(db: Session, current_user: models.User, job_id: str) -> models.Job:
+    query = db.query(models.Job).filter(models.Job.id == job_id)
+    if not getattr(current_user, "is_admin", False):
+        query = query.filter(models.Job.user_id == current_user.id)
+    job = query.first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job

@@ -11,6 +11,24 @@ type FetchOptions = {
   body?: BodyInit;
 };
 
+// Thrown when the SSO session is missing or expired. Callers surface this as a
+// "로그인 하세요" prompt instead of a generic error.
+export class AuthError extends Error {
+  constructor(message = "로그인이 필요합니다. 다시 로그인 해주세요.") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+// The portal sits behind a Caddy forward_auth SSO gateway. When the session is
+// gone the backend answers 401, and same-origin /api calls get redirected to
+// the login flow — both mean "re-authenticate".
+function assertAuthenticated(response: Response): void {
+  if (response.status === 401 || response.redirected) {
+    throw new AuthError();
+  }
+}
+
 async function apiFetch<T>(path: string, token?: string, options: FetchOptions = {}): Promise<T> {
   const headers: Record<string, string> = options.headers ? { ...options.headers } : {};
   if (!(options.body instanceof FormData)) {
@@ -24,6 +42,7 @@ async function apiFetch<T>(path: string, token?: string, options: FetchOptions =
     headers,
     body: options.body,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || "요청이 실패했습니다.");
@@ -58,6 +77,12 @@ export async function login(username: string, password: string) {
   return response.json();
 }
 
+export type Me = { id: number; username: string; created_at: string };
+// Identify the logged-in SSO user so browser-local chat state (conversations,
+// API keys, model choice) can be namespaced per user — a shared browser must
+// never expose one user's data to the next.
+export const getMe = (token?: string) => apiFetch<Me>("/api/users/me", token);
+
 export const fetchPipelines = (token: string) => apiFetch<PipelineResponse>("/api/pipelines", token);
 export const fetchJobs = (token: string) => apiFetch<JobResponse[]>("/api/jobs", token);
 export const fetchJob = (jobId: string, token: string) => apiFetch<JobResponse>(`/api/jobs/${jobId}`, token);
@@ -72,10 +97,14 @@ export async function createJob(form: FormData, token: string) {
 export const deleteJob = (jobId: string, token: string) =>
   apiFetch(`/api/jobs/${jobId}`, token, { method: "DELETE" });
 
+export const cancelJob = (jobId: string, token: string) =>
+  apiFetch<JobResponse>(`/api/jobs/${jobId}/cancel`, token, { method: "POST" });
+
 export async function downloadArtifact(jobId: string, artifactId: string, token: string) {
   const response = await fetch(`${API_BASE}/api/jobs/${jobId}/artifacts/${artifactId}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     throw new Error("파일 다운로드에 실패했습니다.");
   }
@@ -85,8 +114,9 @@ export async function downloadArtifact(jobId: string, artifactId: string, token:
 
 export async function downloadArchive(jobId: string, token: string) {
   const response = await fetch(`${API_BASE}/api/jobs/${jobId}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
+  assertAuthenticated(response);
   if (!response.ok) {
     throw new Error("결과를 다운로드할 수 없습니다.");
   }
@@ -94,9 +124,47 @@ export async function downloadArchive(jobId: string, token: string) {
   return blob;
 }
 
+export interface ContigOption {
+  id: string;
+  label: string;
+  contig: string;
+  recommended: boolean;
+}
+
+export interface ContigSuggestions {
+  chains: string[];
+  options: ContigOption[];
+  processed_coords: boolean;
+}
+
+export async function fetchContigSuggestions(file: File, token: string): Promise<ContigSuggestions> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/api/rfdiffusion/contig-suggestions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!res.ok) {
+    return {
+      chains: [],
+      options: [{ id: "custom", label: "직접 입력", contig: "", recommended: true }],
+      processed_coords: true,
+    };
+  }
+  return res.json();
+}
+
 export interface PipelineResponse {
   retentionDays: number;
+  categories?: PipelineCategory[];
   pipelines: PipelineMeta[];
+}
+
+export interface PipelineCategory {
+  key: string;
+  label: string;
+  blurb: string;
 }
 
 export interface PipelineMeta {
@@ -104,6 +172,8 @@ export interface PipelineMeta {
   label: string;
   description: string;
   instructions: string;
+  category?: string;
+  tags?: string[];
   supportsSequence: boolean;
   requiresArchive: boolean;
   previewKind: string;
@@ -115,6 +185,7 @@ export interface PipelineMeta {
     options?: Array<{ value: string; label: string }>;
     placeholder?: string;
     helper?: string;
+    minimum?: number | null;
   }>;
 }
 
@@ -139,6 +210,13 @@ export interface JobResponse {
   preferred_download_dir?: string | null;
   parameters: Record<string, unknown>;
   artifacts: ArtifactMeta[];
+  // Rough queue/progress estimate, present only while the job is active.
+  queue_position?: number | null;
+  eta_seconds?: number | null;
+  avg_seconds?: number | null;
+  elapsed_seconds?: number | null;
+  // Set only when an admin is viewing another account's job.
+  owner?: string | null;
 }
 
 export type AssistantRequest = {
@@ -156,3 +234,182 @@ export const askAssistant = (payload: AssistantRequest, token: string) =>
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+// --- Execution chatbot (SP3): user's own LLM key runs MCP tools in-process ---
+
+export type ChatProvider = "exaone" | "anthropic" | "openai" | "gemini";
+
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type ChatToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: Record<string, unknown>;
+};
+
+export type ChatAttachment = {
+  name: string;
+  base64: string;
+};
+
+export type ChatRequest = {
+  provider: ChatProvider;
+  api_key: string;
+  model?: string;
+  messages: ChatTurn[];
+  attachments?: ChatAttachment[];
+};
+
+export type ChatResponse = {
+  reply: string;
+  tool_calls: ChatToolCall[];
+  model: string;
+};
+
+export const chatWithModels = (payload: ChatRequest, token: string) =>
+  apiFetch<ChatResponse>("/api/chat", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+// Live model list for the chosen provider using the user's key (not hardcoded).
+export const listChatModels = (payload: { provider: ChatProvider; api_key: string }, token: string) =>
+  apiFetch<{ models: string[]; default: string }>("/api/chat/models", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+// Read-only learned guidance (active/approved artifact) — visible to any user.
+export type Insights = {
+  active: boolean;
+  payload: {
+    recommended_defaults: Record<string, Record<string, unknown>>;
+    warnings: { pipeline: string; condition: string; message: string }[];
+    recipes: { goal: string; steps: string[] }[];
+  };
+  summary: string | null;
+  updated_at: string | null;
+};
+
+export const fetchInsights = (token: string) =>
+  apiFetch<Insights>("/api/selfimprove/insights", token);
+
+// Admin review of self-improvement artifacts.
+export type ImprovementArtifact = {
+  id: string;
+  status: string; // proposed | active | rejected
+  summary: string;
+  payload: Insights["payload"];
+  stats: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export const fetchSelfimproveAdmin = (token: string) =>
+  apiFetch<{ is_admin: boolean }>("/api/selfimprove/admin", token);
+
+export const listArtifacts = (token: string) =>
+  apiFetch<{ artifacts: ImprovementArtifact[] }>("/api/selfimprove/artifacts", token);
+
+export const activateArtifact = (token: string, id: string) =>
+  apiFetch<{ ok: boolean; id: string; status: string }>(
+    `/api/selfimprove/artifacts/${id}/activate`,
+    token,
+    { method: "POST" },
+  );
+
+export const rejectArtifact = (token: string, id: string) =>
+  apiFetch<{ ok: boolean; id: string; status: string }>(
+    `/api/selfimprove/artifacts/${id}/reject`,
+    token,
+    { method: "POST" },
+  );
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  template_key: string;
+  last_run_status: string | null;
+  created_at: string;
+}
+
+export interface WorkflowRunStep {
+  order: number;
+  step_name: string;
+  worker_name: string;
+  status: string;
+  job_id: string | null;
+  metrics: Record<string, unknown> | null;
+  error_message: string | null;
+  logs: string | null;
+}
+
+export interface WorkflowRunDetail {
+  id: string;
+  status: string;
+  error_message: string | null;
+  input_summary: Record<string, unknown> | null;
+  output_summary: Record<string, unknown> | null;
+  steps: WorkflowRunStep[];
+}
+
+export const listWorkflows = (token: string) =>
+  apiFetch<{ workflows: WorkflowSummary[] }>("/api/workflows", token);
+
+export const instantiateWorkflow = (token: string, body: { template_key: string; name?: string }) =>
+  apiFetch<WorkflowSummary>("/api/workflows", token, { method: "POST", body: JSON.stringify(body) });
+
+export const uploadWorkflowInput = async (token: string, file: File): Promise<{ backbone_path: string; file_name: string }> => {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<{ backbone_path: string; file_name: string }>("/api/workflows/upload", token, { method: "POST", body: form });
+};
+
+export const startWorkflowRun = (
+  token: string,
+  workflowId: string,
+  body: { sequence?: string; backbone_path?: string; step_params?: Record<string, unknown> },
+) => apiFetch<{ id: string; status: string }>(`/api/workflows/${workflowId}/runs`, token, { method: "POST", body: JSON.stringify(body) });
+
+export const getWorkflowRun = (token: string, runId: string) =>
+  apiFetch<WorkflowRunDetail>(`/api/workflows/runs/${runId}`, token);
+
+export const getWorkflowReport = (token: string, runId: string) =>
+  apiFetch<{ run_id: string; status: string; candidates: Array<Record<string, unknown>> }>(
+    `/api/workflows/runs/${runId}/report`, token,
+  );
+
+export const cancelWorkflowRun = (token: string, runId: string) =>
+  apiFetch<{ id: string; status: string }>(`/api/workflows/runs/${runId}/cancel`, token, { method: "POST" });
+
+export interface McpToken {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export const listMcpTokens = (token: string) =>
+  apiFetch<{ tokens: McpToken[] }>("/api/mcp/tokens", token);
+
+export const createMcpToken = (token: string, name: string) =>
+  apiFetch<McpToken & { token: string }>("/api/mcp/tokens", token, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+
+export const revokeMcpToken = (token: string, id: string) =>
+  apiFetch<{ ok: boolean }>(`/api/mcp/tokens/${id}/revoke`, token, { method: "POST" });
+
+export type CompatNode = { key: string; produces: string[]; consumes: string[] };
+export type CompatEdge = { from: string; to: string; role: string; advanced: boolean };
+export type ExampleChain = { title: string; steps: string[]; prompt: string };
+export type CompatGraph = { nodes: CompatNode[]; edges: CompatEdge[]; examples: ExampleChain[] };
+
+export async function getChainsCompat(token?: string): Promise<CompatGraph> {
+  return apiFetch<CompatGraph>("/api/chains/compat", token);
+}

@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..auth import authenticate_user, create_access_token, hash_password
+from ..auth import SSO_USERNAME_PREFIX, authenticate_user, create_access_token, hash_password
 from ..database import get_db
 from ..schemas import Token, UserCreate, UserRead
 
@@ -14,6 +14,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserRead)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
+    # The "sso:" namespace is reserved for gateway-provisioned SSO identities;
+    # allowing a local account there would let an attacker collide with (and
+    # take over) another user's SSO workspace.
+    if payload.username.startswith(SSO_USERNAME_PREFIX):
+        raise HTTPException(status_code=400, detail="Username already exists.")
     existing = db.query(models.User).filter(models.User.username == payload.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists.")

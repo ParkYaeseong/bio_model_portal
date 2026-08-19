@@ -1,45 +1,88 @@
-# Maps RunPod-style endpoint_id -> local worker URL.
-# Portal uses these IDs in its .env (ALPHAFOLD_ENDPOINT_ID etc.).
-# The `packager` field controls how the worker output gets bundled into
-# an archive that portal's JobMonitor can persist.
-
 endpoints:
-  bioemu-local:
-    worker_url: http://127.0.0.1:18103
-    packager: bioemu
-
-  esmfold-local:
-    worker_url: http://127.0.0.1:18162
-    packager: esmfold
-
-  esmfold2-local:
-    worker_url: http://127.0.0.1:18108
-    packager: esmfold2
-
-  rfdiffusion-local:
-    worker_url: http://127.0.0.1:18104
-    packager: generic
-    adapter: rfdiffusion
-
   proteinmpnn-local:
-    worker_url: http://127.0.0.1:18101
+    worker_url: http://211.188.35.221:18101
     packager: proteinmpnn
     adapter: proteinmpnn
-
-  mmseqs-local:
-    worker_url: http://127.0.0.1:18106
-    packager: generic
-    adapter: mmseqs
-
   rosetta-relax-local:
-    worker_url: http://127.0.0.1:18102
+    worker_url: http://211.188.35.221:18102
     packager: generic
     adapter: rosetta_relax
-
+  bioemu-local:
+    worker_url: http://211.188.35.221:18103
+    packager: bioemu
+    adapter: bioemu
+  rfdiffusion-local:
+    worker_url: http://211.188.35.221:18104
+    packager: rfd3
+    adapter: rfdiffusion
   diffdock-local:
-    worker_url: http://127.0.0.1:18105
-    packager: generic
-
+    worker_url: http://211.188.35.221:18105
+    packager: diffdock
+    adapter: diffdock
+  mmseqs-local:
+    worker_url: http://211.188.35.221:18107
+    packager: mmseqs
+    adapter: mmseqs
   colabfold-local:
-    worker_url: http://127.0.0.1:18161
+    worker_url: http://211.188.35.221:18160
     packager: colabfold
+    adapter: colabfold
+  esmfold-local:
+    worker_url: http://211.188.35.221:18162
+    packager: esmfold
+    adapter: esmfold
+  # AlphaFold3 (non-commercial license only - see WEIGHTS_TERMS_OF_USE.md in the
+  # AF3 repo). Requires the NCP ACG to allow inbound TCP 18110 on the worker host.
+  alphafold3-local:
+    worker_url: http://211.188.35.221:18110
+    packager: af3
+    adapter: af3
+  # Antigen validation: interface-confidence scoring (ipSAE and friends) over a
+  # structure plus its PAE matrix. CPU only, no weights. Requires the NCP ACG to
+  # allow inbound TCP 18108 on the worker host.
+  binder-score-local:
+    worker_url: http://211.188.35.221:18108
+    packager: generic
+    adapter: passthrough
+  # AntiFold: antibody-specific inverse folding (ESM-IF1 fine-tuned on SAbDab/
+  # OAS), an alternative to ProteinMPNN for antibody CDR/FR redesign. Output
+  # shape (native/samples/raw_fasta) matches ProteinMPNN's, so it reuses that
+  # packager.
+  antifold-local:
+    worker_url: http://211.188.35.221:18111
+    packager: proteinmpnn
+    adapter: antifold
+  # ANARCII: antibody numbering (IMGT/Kabat/Chothia/Martin/Aho). CPU only, no
+  # weights of its own beyond the numbering model. Pure JSON in/out - takes
+  # {"sequences": {...}} or a list of {"id", "sequence"} - so it needs no file
+  # marshalling and reuses the passthrough adapter, same as binder-score.
+  anarcii-local:
+    worker_url: http://211.188.35.221:18109
+    packager: generic
+    adapter: anarcii
+
+  # PPIformer: mutation-induced binding free-energy change (ddG) for an
+  # interface. Runs on bop behind a round-robin front (18113) over a pool of
+  # worker processes - PPIformer serialises predictions in-process, so capacity
+  # is processes, but externally it is one port like every other worker.
+  ppiformer-local:
+    worker_url: http://211.188.35.221:18113
+    packager: generic
+    adapter: ppiformer
+
+  # Boltz-2: fast structure prediction (single-sequence, no MSA by default)
+  # plus optional protein-ligand co-folding and binding-affinity prediction.
+  # Requires the NCP ACG to allow inbound TCP 18112 on the worker host.
+  boltz2-local:
+    worker_url: http://211.188.35.221:18112
+    packager: boltz
+    adapter: boltz
+
+  # RunPod serverless passthrough (no local GPU worker for these models)
+  alphafold-local:
+    runpod_endpoint_id: n3tcpxdv3irr46
+    packager: generic
+    adapter: alphafold
+  phastest-local:
+    runpod_endpoint_id: hmhrwi5mvm8idm
+    packager: generic

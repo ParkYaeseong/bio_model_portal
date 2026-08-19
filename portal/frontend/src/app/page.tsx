@@ -1,21 +1,26 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import JSZip from "jszip";
 import ReactMarkdown from "react-markdown";
 
 import {
   PipelineMeta,
+  PipelineCategory,
   JobResponse,
+  ContigOption,
+  AuthError,
   fetchPipelines,
   fetchJobs,
+  fetchContigSuggestions,
   createJob,
   deleteJob,
+  cancelJob,
   downloadArchive,
   downloadArtifact,
-  login,
-  register,
+  fetchSelfimproveAdmin,
 } from "@/lib/api";
 import { triggerDownload } from "@/lib/download";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
@@ -83,210 +88,143 @@ const createUploadEntry = (file: File, desiredPath?: string, enforceInputsPrefix
   return { file, relativePath };
 };
 
-export default function HomePage() {
-  const [token, setToken] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem("portal-token");
-    if (saved) {
-      setToken(saved);
-    }
-  }, []);
-
-  const handleLogin = async (username: string, password: string) => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      const data = await login(username, password);
-      setToken(data.access_token);
-      window.localStorage.setItem("portal-token", data.access_token);
-    } catch (error: any) {
-      setAuthError(error.message || "로그인 중 오류가 발생했습니다.");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleRegister = async (username: string, password: string) => {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await register(username, password);
-      await handleLogin(username, password);
-    } catch (error: any) {
-      setAuthError(error.message || "회원가입 중 오류가 발생했습니다.");
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = () => {
-    window.localStorage.removeItem("portal-token");
-    setToken(null);
-  };
-
-  if (!token) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-brand-50 to-white px-6 py-12">
-        <div className="w-full max-w-4xl rounded-3xl bg-white p-12 shadow-2xl ring-1 ring-slate-100">
-          <h1 className="text-3xl font-semibold text-slate-900">RunPod 구조 분석 허브</h1>
-          <p className="mt-2 text-slate-600">하나의 계정으로 AlphaFold2, DiffDock, PHASTEST를 관리하세요.</p>
-          <AuthSwitcher
-            mode={authMode}
-            onModeChange={setAuthMode}
-            onLogin={handleLogin}
-            onRegister={handleRegister}
-            loading={authLoading}
-            error={authError}
-          />
-        </div>
-      </main>
-    );
+// Accepted upload formats + an unobtrusive hint, per pipeline. `accept` only
+// filters the file dialog (users can still pick "all files"); the hint tells
+// them what the pipeline can use.
+function acceptedFiles(pipeline: PipelineMeta): { accept: string; hint: string } {
+  if (pipeline.key === "phastest") {
+    return { accept: ".fasta,.fa,.fna,.csv,.gb,.gbk,.zip", hint: "FASTA · CSV · GenBank" };
   }
-
-  return <Dashboard token={token} onLogout={handleLogout} />;
+  if (pipeline.supportsSequence) {
+    return {
+      accept: ".fasta,.fa,.faa,.fna,.txt,.pdb,.cif,.mmcif,.zip",
+      hint: "FASTA, 또는 PDB·CIF (구조 업로드 시 서열 자동 추출)",
+    };
+  }
+  return { accept: ".pdb,.cif,.mmcif,.zip", hint: "PDB · CIF" };
 }
 
-type AuthProps = {
-  mode: "login" | "register";
-  onModeChange: (mode: "login" | "register") => void;
-  onLogin: (username: string, password: string) => Promise<void>;
-  onRegister: (username: string, password: string) => Promise<void>;
-  loading: boolean;
-  error: string | null;
-};
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}초`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}분`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}시간 ${rm}분` : `${h}시간`;
+}
 
-function AuthSwitcher({ mode, onModeChange, onLogin, onRegister, loading, error }: AuthProps) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [localError, setLocalError] = useState<string | null>(null);
+const RUNNING_STATUSES = new Set(["running", "in_progress", "processing"]);
+const QUEUED_STATUSES = new Set(["pending", "submitted", "queued", "in_queue"]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLocalError(null);
-    if (mode === "register" && password !== confirm) {
-      setLocalError("비밀번호 확인이 일치하지 않습니다.");
-      return;
+// Rough progress + queue position for an active job. All values are estimates
+// (workers report no true percentage); the copy says "~" / "대략" accordingly.
+function JobProgress({ job }: { job: JobResponse }) {
+  const status = (job.status || "").toLowerCase();
+  const running = RUNNING_STATUSES.has(status);
+  const queued = QUEUED_STATUSES.has(status);
+  if (!running && !queued) return null;
+
+  const avg = job.avg_seconds ?? null;
+  const elapsed = job.elapsed_seconds ?? 0;
+  const eta = job.eta_seconds ?? null;
+  const ahead = job.queue_position ?? 0;
+
+  const pct = running && avg ? Math.min(95, Math.round((elapsed / avg) * 100)) : queued ? 6 : 0;
+
+  // "앞에 N개" = other jobs (all users) still ahead on the same model endpoint.
+  const aheadLabel = ahead > 0 ? `앞에 ${ahead}개` : null;
+  const parts: string[] = [];
+  if (queued) {
+    parts.push(aheadLabel ? `${aheadLabel} 대기` : "대기 중");
+    if (eta != null && avg != null) {
+      parts.push(`예상 시작 ~${formatDuration(Math.max(0, eta - avg))} · 총 ~${formatDuration(eta)}`);
     }
-    if (mode === "register") {
-      if (password.length < 6) {
-        setLocalError("비밀번호는 최소 6자 이상이어야 합니다.");
-        return;
-      }
-      if (password.length > 72) {
-        setLocalError("비밀번호는 최대 72자까지 가능합니다.");
-        return;
-      }
-    }
-    if (!username.trim() || !password.trim()) {
-      setLocalError("아이디와 비밀번호를 모두 입력하세요.");
-      return;
-    }
-    if (mode === "login") {
-      onLogin(username, password);
-    } else {
-      onRegister(username, password);
-    }
+  } else {
+    parts.push(`경과 ${formatDuration(elapsed)}`);
+    if (aheadLabel) parts.push(aheadLabel);
+    if (eta != null) parts.push(`예상 ~${formatDuration(eta)} 남음`);
+  }
+  if (avg == null) parts.push("예상시간 정보 부족");
+
+  return (
+    <div className="mt-2">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full ${running ? "bg-brand-500" : `bg-amber-400 ${"animate-pulse"}`}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">{parts.join(" · ")}</p>
+    </div>
+  );
+}
+
+export default function HomePage() {
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Access is gated upstream by the Keycloak SSO forward_auth gateway, and the
+  // backend identifies each user from the gateway-injected X-KBF-User header —
+  // so the browser holds no token. Clear any stale token from the old
+  // shared-account design so it can never be sent.
+  useEffect(() => {
+    window.localStorage.removeItem("portal-token");
+  }, []);
+
+  // Real logout = end the SSO session at the gateway (Keycloak end-session),
+  // not just drop local state.
+  const handleLogout = () => {
+    window.location.href = "/logout";
   };
 
   return (
-    <div className="mt-8 grid gap-8 md:grid-cols-2">
-      <form onSubmit={handleSubmit} className="space-y-5 rounded-2xl border border-slate-100 p-8">
-        <div>
-          <label className="text-sm font-semibold text-slate-600">아이디</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-600">비밀번호</label>
-          <input
-            type="password"
-            className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <p className="mt-1 text-xs text-slate-500">6~72자 사이의 비밀번호를 사용하세요.</p>
-        </div>
-        {mode === "register" && (
-          <div>
-            <label className="text-sm font-semibold text-slate-600">비밀번호 확인</label>
-            <input
-              type="password"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-            />
-          </div>
-        )}
-        {(localError || error) && <p className="text-sm text-rose-600">{localError || error}</p>}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-2xl bg-brand-600 px-4 py-3 text-white shadow-lg shadow-brand-200 transition hover:bg-brand-500 disabled:opacity-50"
+    <>
+      <Dashboard onLogout={handleLogout} onAuthExpired={() => setSessionExpired(true)} />
+      {sessionExpired && <SessionExpiredModal />}
+    </>
+  );
+}
+
+function SessionExpiredModal() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-6">
+      <div className="w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
+        <h2 className="text-xl font-semibold text-slate-900">세션이 만료되었습니다</h2>
+        <p className="mt-2 text-slate-600">로그인 하세요.</p>
+        <a
+          href="/login"
+          className="mt-6 inline-block rounded-2xl bg-brand-600 px-6 py-3 text-white shadow-lg shadow-brand-200 transition hover:bg-brand-500"
         >
-          {loading ? "처리 중..." : mode === "login" ? "로그인" : "회원가입"}
-        </button>
-      </form>
-      <div className="rounded-2xl bg-slate-50 p-8">
-        <p className="text-sm font-semibold text-brand-600">한 곳에서 세 가지 파이프라인</p>
-        <h2 className="mt-2 text-2xl font-semibold text-slate-900">AlphaFold2 · DiffDock · PHASTEST</h2>
-        <p className="mt-4 text-slate-600">
-          RunPod Serverless 위에 구축된 세 개의 워크로드를 클릭 몇 번으로 실행합니다. 업로드한 데이터와 결과는 암호화된 파일 시스템에 저장되며, 7일 후 자동으로 정리됩니다.
-        </p>
-        <div className="mt-6 space-y-4 text-sm text-slate-600">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">1</span>
-            <div>
-              <p className="font-semibold">파일 또는 폴더 업로드</p>
-              <p>웹 폴더 업로드 버튼으로 실험 세트를 한 번에 올릴 수 있습니다.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">2</span>
-            <div>
-              <p className="font-semibold">실시간 상태 추적</p>
-              <p>RunPod job ID와 진행 상태를 초 단위로 확인하세요.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-700">3</span>
-            <div>
-              <p className="font-semibold">결과 뷰어</p>
-              <p>Protein viewer, DiffDock pose 리스트, PHASTEST HTML 보고서를 웹에서 바로 확인합니다.</p>
-            </div>
-          </div>
-        </div>
-        <div className="mt-8 flex items-center gap-3 text-sm text-slate-500">
-          <span className="font-semibold">계정이 없나요?</span>
-          <button className="text-brand-600 underline" onClick={() => onModeChange(mode === "login" ? "register" : "login")}>
-            {mode === "login" ? "회원가입으로 전환" : "로그인으로 전환"}
-          </button>
-        </div>
+          로그인
+        </a>
       </div>
     </div>
   );
 }
 
 type DashboardProps = {
-  token: string;
   onLogout: () => void;
+  onAuthExpired: () => void;
 };
 
-function Dashboard({ token, onLogout }: DashboardProps) {
-  const { data: pipelineData } = useSWR(token ? ["pipelines", token] : null, ([, t]) => fetchPipelines(t as string));
+function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
+  // Identity travels in the gateway-injected header, so API calls carry no
+  // bearer token; the empty string disables the Authorization header.
+  const token = "";
+
+  const handleAuthError = useCallback(
+    (error: unknown) => {
+      if (error instanceof AuthError) onAuthExpired();
+    },
+    [onAuthExpired]
+  );
+
+  const { data: pipelineData } = useSWR(["pipelines"], () => fetchPipelines(token), { onError: handleAuthError });
+  const { data: siAdmin } = useSWR(["si-admin"], () => fetchSelfimproveAdmin(token));
   const { data: jobs, mutate: refreshJobs, isLoading: jobsLoading } = useSWR(
-    token ? ["jobs", token] : null,
-    ([, t]) => fetchJobs(t as string),
-    { refreshInterval: 15000 }
+    ["jobs"],
+    () => fetchJobs(token),
+    { refreshInterval: 15000, onError: handleAuthError }
   );
 
   const [selectedPipelineKey, setSelectedPipelineKey] = useState<string | null>(null);
@@ -295,13 +233,22 @@ function Dashboard({ token, onLogout }: DashboardProps) {
   const [sequence, setSequence] = useState("");
   const [title, setTitle] = useState("새로운 작업");
   const [paramState, setParamState] = useState<Record<string, string>>({ model_preset: "monomer", db_preset: "full_dbs" });
+  // Multimer/complex chain editor: one sequence per chain, assembled on submit
+  // (AF2 -> multi-record FASTA, ColabFold -> ':'-joined single record).
+  const [multimerChains, setMultimerChains] = useState<string[]>(["", ""]);
+  const [colabfoldMultimer, setColabfoldMultimer] = useState(false);
   const [uploads, setUploads] = useState<UploadEntry[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [diffdockJobs, setDiffdockJobs] = useState<DiffdockJobInput[]>([createBlankDiffdockJob()]);
   const [phastestConfig, setPhastestConfig] = useState<PhastestConfig>(defaultPhastestConfig);
+  const [contigOptions, setContigOptions] = useState<ContigOption[]>([]);
+  const [contigChoice, setContigChoice] = useState<string>("custom");
+  const [customContig, setCustomContig] = useState<string>("");
+  const [contigLoading, setContigLoading] = useState(false);
 
   const retentionDays = pipelineData?.retentionDays ?? 7;
   const pipelines = useMemo(() => pipelineData?.pipelines ?? [], [pipelineData]);
+  const categories = useMemo(() => pipelineData?.categories ?? [], [pipelineData]);
   const selectedPipeline = pipelines.find((p) => p.key === selectedPipelineKey) ?? pipelines[0];
   const selectedJob = useMemo(() => jobs?.find((job) => job.id === selectedJobId) ?? jobs?.[0], [jobs, selectedJobId]);
 
@@ -325,6 +272,19 @@ function Dashboard({ token, onLogout }: DashboardProps) {
     }
   }, [selectedPipeline]);
 
+  // Reset contig suggestions whenever the selected pipeline changes.
+  useEffect(() => {
+    setContigOptions([]);
+    setContigChoice("custom");
+    setCustomContig("");
+    setMultimerChains(["", ""]);
+    setColabfoldMultimer(false);
+  }, [selectedPipeline?.key]);
+
+  const multimerActive =
+    (selectedPipeline?.key === "alphafold" && paramState.model_preset === "multimer") ||
+    (selectedPipeline?.key === "colabfold" && colabfoldMultimer);
+
   const handlePasswordPersist = (pipelineKey: string, name: string, value: string) => {
     if (typeof window === "undefined") return;
     const storageKey = `portal:${pipelineKey}:${name}`;
@@ -344,8 +304,27 @@ function Dashboard({ token, onLogout }: DashboardProps) {
 
   const handleFiles = (files: FileList | null) => {
     if (!files) return;
-    const entries = Array.from(files).map((file) => createUploadEntry(file));
+    const fileArray = Array.from(files);
+    const entries = fileArray.map((file) => createUploadEntry(file));
     setUploads((prev) => [...prev, ...entries]);
+    if (selectedPipeline?.key === "rfdiffusion") {
+      const pdb = fileArray.find((f) => /\.(pdb|cif)$/i.test(f.name));
+      if (pdb) {
+        void loadContigSuggestions(pdb);
+      }
+    }
+  };
+
+  const loadContigSuggestions = async (file: File) => {
+    setContigLoading(true);
+    try {
+      const result = await fetchContigSuggestions(file, token);
+      setContigOptions(result.options);
+      const recommended = result.options.find((o) => o.recommended);
+      setContigChoice(recommended?.id ?? "custom");
+    } finally {
+      setContigLoading(false);
+    }
   };
 
   const handleFolder = async (files: FileList | null) => {
@@ -405,6 +384,18 @@ function Dashboard({ token, onLogout }: DashboardProps) {
   const handleSubmit = async () => {
     if (!selectedPipeline) return;
     const normalizedParams: Record<string, unknown> = { ...paramState };
+
+    // Reject number inputs below their declared minimum (e.g. 0 / negative counts).
+    for (const field of selectedPipeline.inputFields) {
+      if (field.field_type !== "number" || field.minimum == null) continue;
+      const raw = (paramState[field.name] ?? "").trim();
+      if (raw === "") continue;
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num < field.minimum) {
+        setUploadError(`${translate(field.label)}은(는) ${field.minimum} 이상이어야 합니다.`);
+        return;
+      }
+    }
 
     const jobSpecificUploads: UploadEntry[] = [];
 
@@ -478,6 +469,13 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       }
     }
 
+    if (selectedPipeline.key === "rfdiffusion") {
+      const chosen = contigOptions.find((o) => o.id === contigChoice);
+      const contigValue = contigChoice === "custom" ? customContig.trim() : (chosen?.contig ?? "");
+      normalizedParams.contigs = contigValue;
+      normalizedParams.contig_processed_coords = contigChoice !== "custom";
+    }
+
     const needsArchive =
       selectedPipeline.requiresArchive &&
       !(selectedPipeline.key === "phastest" && phastestConfig.input_type === "genbank");
@@ -487,6 +485,30 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       return;
     }
 
+    // Assemble the sequence from the per-chain multimer editor when active.
+    // If chains aren't typed but a FASTA file is uploaded, let the uploaded file
+    // provide the multimer chains (the gateway assembles them).
+    let effectiveSequence = sequence.trim();
+    if (multimerActive) {
+      const chains = multimerChains.map((c) => c.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+      const hasUpload = uploads.length + jobSpecificUploads.length > 0;
+      if (chains.length >= 2) {
+        effectiveSequence =
+          selectedPipeline.key === "colabfold"
+            ? chains.join(":")
+            : chains.map((seq, i) => `>chain_${i + 1}\n${seq}`).join("\n") + "\n";
+      } else if (hasUpload) {
+        // Multimer chains come from the uploaded FASTA; don't send a stale
+        // typed sequence.
+        effectiveSequence = "";
+      } else {
+        setUploadError(
+          "멀티머(복합체)는 서열이 있는 체인을 2개 이상 입력하거나, 여러 체인이 담긴 FASTA 파일을 업로드하세요."
+        );
+        return;
+      }
+    }
+
     setUploadError(null);
     setIsSubmitting(true);
     try {
@@ -494,8 +516,8 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       form.append("title", title);
       form.append("pipeline", selectedPipeline.key);
       form.append("parameters", JSON.stringify(normalizedParams));
-      if (selectedPipeline.supportsSequence && sequence.trim()) {
-        form.append("sequence", sequence.trim());
+      if (selectedPipeline.supportsSequence && effectiveSequence) {
+        form.append("sequence", effectiveSequence);
       }
       [...uploads, ...jobSpecificUploads].forEach((entry) => {
         form.append("files", entry.file, entry.relativePath);
@@ -503,10 +525,16 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       await createJob(form, token);
       setUploads([]);
       setSequence("");
+      setMultimerChains(["", ""]);
+      setColabfoldMultimer(false);
       setDiffdockJobs([createBlankDiffdockJob()]);
       setPhastestConfig(defaultPhastestConfig);
+      setContigOptions([]);
+      setContigChoice("custom");
+      setCustomContig("");
       await refreshJobs();
     } catch (error: any) {
+      handleAuthError(error);
       setUploadError(error.message || "작업 생성 중 오류가 발생했습니다.");
     } finally {
       setIsSubmitting(false);
@@ -514,20 +542,46 @@ function Dashboard({ token, onLogout }: DashboardProps) {
   };
 
   const handleDownload = async (jobId: string) => {
-    const blob = await downloadArchive(jobId, token);
-    triggerDownload(blob, `${jobId}.tar.gz`);
+    try {
+      const blob = await downloadArchive(jobId, token);
+      triggerDownload(blob, `${jobId}.tar.gz`);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
   };
 
   const handleArtifactDownload = async (jobId: string, artifactId: string, filename: string) => {
-    const blob = await downloadArtifact(jobId, artifactId, token);
-    triggerDownload(blob, filename);
+    try {
+      const blob = await downloadArtifact(jobId, artifactId, token);
+      triggerDownload(blob, filename);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
   };
 
   const handleDelete = async (jobId: string) => {
-    if (!confirm("정말 삭제하시겠습니까?")) return;
-    await deleteJob(jobId, token);
+    if (!confirm("삭제하시겠습니까? 아직 실행 중이면 연산을 정지한 뒤 삭제합니다.")) return;
+    try {
+      await deleteJob(jobId, token);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
+    }
     if (jobId === selectedJobId) {
       setSelectedJobId(null);
+    }
+    await refreshJobs();
+  };
+
+  const handleCancel = async (jobId: string) => {
+    if (!confirm("실행 중인 작업을 정지할까요? 진행 중인 연산이 취소됩니다.")) return;
+    try {
+      await cancelJob(jobId, token);
+    } catch (error) {
+      handleAuthError(error);
+      throw error;
     }
     await refreshJobs();
   };
@@ -541,9 +595,31 @@ function Dashboard({ token, onLogout }: DashboardProps) {
             <p className="text-sm text-slate-500">AI Structure Pipeline Hub</p>
             <h1 className="text-2xl font-semibold text-slate-900">K-BioFoundry Orchestrator</h1>
           </div>
-          <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
-            로그아웃
-          </button>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/chains"
+              className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              연결 가이드
+            </Link>
+            <Link
+              href="/mcp"
+              className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              AI 연결
+            </Link>
+            {siAdmin?.is_admin && (
+              <Link
+                href="/selfimprove"
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+              >
+                자가개선
+              </Link>
+            )}
+            <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
+              로그아웃
+            </button>
+          </div>
         </div>
       </header>
 
@@ -558,7 +634,7 @@ function Dashboard({ token, onLogout }: DashboardProps) {
       <section className="mx-auto max-w-7xl px-6 pb-24">
         <div className="grid gap-8 lg:grid-cols-[1.2fr,0.8fr]">
           <div className="space-y-8">
-            <PipelineSelector selected={selectedPipeline?.key} pipelines={pipelines} onSelect={setSelectedPipelineKey} />
+            <PipelineSelector selected={selectedPipeline?.key} pipelines={pipelines} categories={categories} onSelect={setSelectedPipelineKey} />
             {selectedPipeline && (
               <SubmissionPanel
                 pipeline={selectedPipeline}
@@ -566,6 +642,11 @@ function Dashboard({ token, onLogout }: DashboardProps) {
                 onTitleChange={setTitle}
                 sequence={sequence}
                 onSequenceChange={setSequence}
+                multimerActive={multimerActive}
+                multimerChains={multimerChains}
+                onMultimerChainsChange={setMultimerChains}
+                colabfoldMultimer={colabfoldMultimer}
+                onColabfoldMultimerChange={setColabfoldMultimer}
                 paramState={paramState}
                 onParamChange={handleParamChange}
                 onPasswordPersist={handlePasswordPersist}
@@ -575,6 +656,12 @@ function Dashboard({ token, onLogout }: DashboardProps) {
                 onDiffdockRemove={handleDiffdockJobRemove}
                 phastestConfig={phastestConfig}
                 onPhastestConfigChange={setPhastestConfig}
+                contigOptions={contigOptions}
+                contigChoice={contigChoice}
+                onContigChoiceChange={setContigChoice}
+                customContig={customContig}
+                onCustomContigChange={setCustomContig}
+                contigLoading={contigLoading}
                 uploads={uploads}
                 onFiles={handleFiles}
                 onFolder={handleFolder}
@@ -593,6 +680,7 @@ function Dashboard({ token, onLogout }: DashboardProps) {
               selectedJobId={selectedJob?.id}
               onDownload={handleDownload}
               onDelete={handleDelete}
+              onCancel={handleCancel}
             />
             {selectedJob && (
               <ResultPanel job={selectedJob} token={token} onArtifactDownload={handleArtifactDownload} />)
@@ -608,43 +696,130 @@ function Dashboard({ token, onLogout }: DashboardProps) {
 
 type PipelineSelectorProps = {
   pipelines: PipelineMeta[];
+  categories: PipelineCategory[];
   selected?: string;
   onSelect: (key: string) => void;
 };
 
-function PipelineSelector({ pipelines, selected, onSelect }: PipelineSelectorProps) {
-  const copyMap: Record<string, { description: string; instructions: string }> = {
-    alphafold: {
-      description: "단백질 구조 예측",
-      instructions: "FASTA 서열을 붙여 넣거나 ZIP으로 묶어서 업로드하고 모델/DB 옵션을 선택하세요.",
-    },
-    diffdock: {
-      description: "리간드 도킹/포즈 예측",
-      instructions: "수용체 PDB와 리간드 SDF/SMILES를 업로드하면 여러 복합체를 한 번에 도킹합니다.",
-    },
-    phastest: {
-      description: "PHASTEST 바이러스 분석",
-      instructions: "유전체 FASTA·Contig·GenBank 데이터를 넣어 기능 리포트와 주석을 생성합니다.",
-    },
-  };
+function PipelineSelector({ pipelines, categories, selected, onSelect }: PipelineSelectorProps) {
+  // Group the flat pipeline list into the sections the backend declares. Anything
+  // whose category is unknown falls into a trailing "기타" section so a newly added
+  // pipeline can never disappear from the picker.
+  const groups = useMemo(() => {
+    const known = categories.length
+      ? categories
+      : [{ key: "other", label: "기타", blurb: "" }];
+    const buckets = new Map<string, PipelineMeta[]>(known.map((c) => [c.key, []]));
+    const leftovers: PipelineMeta[] = [];
+    for (const pipeline of pipelines) {
+      const bucket = pipeline.category ? buckets.get(pipeline.category) : undefined;
+      if (bucket) bucket.push(pipeline);
+      else leftovers.push(pipeline);
+    }
+    const sections = known
+      .map((category) => ({ category, items: buckets.get(category.key) ?? [] }))
+      .filter((section) => section.items.length > 0);
+    if (leftovers.length) {
+      sections.push({ category: { key: "__rest", label: "기타", blurb: "" }, items: leftovers });
+    }
+    return sections;
+  }, [pipelines, categories]);
+
+  // A filter rail across the top, mirroring the main KBF portal: "전체" plus one
+  // chip per section, and clicking the active chip toggles back to 전체.
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+
+  // A section that empties out (or a stale key after the catalog changes) would
+  // otherwise strand the user on a blank grid.
+  useEffect(() => {
+    if (activeCategory && !groups.some((section) => section.category.key === activeCategory)) {
+      setActiveCategory(null);
+    }
+  }, [groups, activeCategory]);
+
+  const visibleGroups = activeCategory
+    ? groups.filter((section) => section.category.key === activeCategory)
+    : groups;
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-slate-900">파이프라인 선택</h2>
-      <div className="grid gap-4 md:grid-cols-3">
-        {pipelines.map((pipeline) => (
-          <button
-            key={pipeline.key}
-            onClick={() => onSelect(pipeline.key)}
-            className={`rounded-2xl border p-4 text-left transition ${
-              selected === pipeline.key ? "border-brand-500 bg-brand-50" : "border-slate-200 bg-white hover:border-brand-200"
-            }`}
-          >
-            <p className="text-sm font-semibold text-brand-600">{pipeline.label}</p>
-            <p className="mt-1 text-base font-semibold text-slate-900">{copyMap[pipeline.key]?.description || pipeline.description}</p>
-            <p className="mt-2 text-sm text-slate-500">{copyMap[pipeline.key]?.instructions || pipeline.instructions}</p>
-          </button>
-        ))}
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-2 text-lg font-semibold text-slate-900">파이프라인 선택</h2>
+        <button
+          type="button"
+          aria-pressed={activeCategory === null}
+          onClick={() => setActiveCategory(null)}
+          className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+            activeCategory === null
+              ? "border-brand-500 bg-brand-500 text-white"
+              : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"
+          }`}
+        >
+          전체
+          <span className="ml-1.5 text-xs opacity-70">{pipelines.length}</span>
+        </button>
+        {groups.map(({ category, items }) => {
+          const isActive = activeCategory === category.key;
+          return (
+            <button
+              key={category.key}
+              type="button"
+              aria-pressed={isActive}
+              onClick={() => setActiveCategory(isActive ? null : category.key)}
+              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                isActive
+                  ? "border-brand-500 bg-brand-500 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"
+              }`}
+            >
+              {category.label}
+              <span className="ml-1.5 text-xs opacity-70">{items.length}</span>
+            </button>
+          );
+        })}
       </div>
+      {visibleGroups.map(({ category, items }) => (
+        <section key={category.key} className="space-y-3">
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-sm font-semibold text-slate-700">{category.label}</h3>
+            {category.blurb && <p className="text-xs text-slate-400">{category.blurb}</p>}
+            <span className="ml-auto text-xs text-slate-400">{items.length}</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {items.map((pipeline) => {
+              const isSelected = selected === pipeline.key;
+              return (
+                <button
+                  key={pipeline.key}
+                  onClick={() => onSelect(pipeline.key)}
+                  className={`rounded-2xl border p-4 text-left transition ${
+                    isSelected
+                      ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500"
+                      : "border-slate-200 bg-white hover:border-brand-300 hover:shadow-sm"
+                  }`}
+                >
+                  <p className="text-base font-semibold text-slate-900">{pipeline.label}</p>
+                  <p className="mt-1 text-sm leading-snug text-slate-500">{pipeline.description}</p>
+                  {pipeline.tags && pipeline.tags.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {pipeline.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            isSelected ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -655,6 +830,11 @@ type SubmissionPanelProps = {
   onTitleChange: (value: string) => void;
   sequence: string;
   onSequenceChange: (value: string) => void;
+  multimerActive: boolean;
+  multimerChains: string[];
+  onMultimerChainsChange: (chains: string[]) => void;
+  colabfoldMultimer: boolean;
+  onColabfoldMultimerChange: (value: boolean) => void;
   paramState: Record<string, string>;
   onParamChange: (name: string, value: string) => void;
   onPasswordPersist?: (pipelineKey: string, name: string, value: string) => void;
@@ -664,6 +844,12 @@ type SubmissionPanelProps = {
   onDiffdockRemove: (index: number) => void;
   phastestConfig: PhastestConfig;
   onPhastestConfigChange: (config: PhastestConfig) => void;
+  contigOptions: ContigOption[];
+  contigChoice: string;
+  onContigChoiceChange: (id: string) => void;
+  customContig: string;
+  onCustomContigChange: (value: string) => void;
+  contigLoading: boolean;
   uploads: UploadEntry[];
   onFiles: (files: FileList | null) => void;
   onFolder: (files: FileList | null) => void;
@@ -680,12 +866,23 @@ function SubmissionPanel(props: SubmissionPanelProps) {
     onTitleChange,
     sequence,
     onSequenceChange,
+    multimerActive,
+    multimerChains,
+    onMultimerChainsChange,
+    colabfoldMultimer,
+    onColabfoldMultimerChange,
     diffdockJobs,
     onDiffdockJobsChange,
     onDiffdockFileChange,
     onDiffdockRemove,
     phastestConfig,
     onPhastestConfigChange,
+    contigOptions,
+    contigChoice,
+    onContigChoiceChange,
+    customContig,
+    onCustomContigChange,
+    contigLoading,
     paramState,
     onParamChange,
     onPasswordPersist,
@@ -711,7 +908,7 @@ function SubmissionPanel(props: SubmissionPanelProps) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-xl font-semibold text-slate-900">{pipeline.label} 작업 세팅</h3>
-          <p className="text-sm text-slate-500">모든 입력을 확인한 뒤 &quot;작업 실행&quot; 버튼을 누르세요.</p>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-500">{pipeline.instructions}</p>
         </div>
         <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">{pipeline.previewKind.toUpperCase()}</span>
       </div>
@@ -721,7 +918,11 @@ function SubmissionPanel(props: SubmissionPanelProps) {
       </div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {pipeline.inputFields.map((field) => (
+        {pipeline.inputFields
+          .filter((field) => !(pipeline.key === "rfdiffusion" && field.name === "contigs"))
+          // AF2 model_preset is rendered as the prominent 예측 유형 toggle below.
+          .filter((field) => !(pipeline.key === "alphafold" && field.name === "model_preset"))
+          .map((field) => (
           <div key={field.name}>
             <label className="text-sm font-semibold text-slate-600">{translate(field.label)}</label>
             {field.field_type === "select" ? (
@@ -739,6 +940,14 @@ function SubmissionPanel(props: SubmissionPanelProps) {
                   </option>
                 ))}
               </select>
+            ) : field.field_type === "textarea" ? (
+              <textarea
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 font-mono text-xs"
+                rows={6}
+                placeholder={field.placeholder || ""}
+                value={paramState[field.name] || ""}
+                onChange={(e) => onParamChange(field.name, e.target.value)}
+              />
             ) : (
               <input
                 type={
@@ -753,6 +962,8 @@ function SubmissionPanel(props: SubmissionPanelProps) {
                 className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
                 placeholder={field.placeholder || ""}
                 value={paramState[field.name] || ""}
+                min={field.field_type === "number" && field.minimum != null ? field.minimum : undefined}
+                step={field.field_type === "number" ? 1 : undefined}
                 onChange={(e) => {
                   onParamChange(field.name, e.target.value);
                   if (field.field_type === "password") {
@@ -781,6 +992,45 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         ))}
       </div>
 
+      {pipeline.key === "rfdiffusion" && (
+        <div className="mt-4">
+          <label className="text-sm font-semibold text-slate-600">Contig 선택 (모티프 스캐폴딩)</label>
+          {contigOptions.length > 0 ? (
+            <select
+              className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3"
+              value={contigChoice}
+              onChange={(e) => onContigChoiceChange(e.target.value)}
+            >
+              {contigOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                  {o.recommended ? " (추천)" : ""}
+                  {o.contig ? ` — ${o.contig}` : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="mt-1 rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-400">
+              {contigLoading
+                ? "PDB를 분석하여 Contig 후보를 불러오는 중..."
+                : "PDB/CIF 파일을 업로드하면 Contig 후보가 자동으로 채워집니다. 신규 디자인이면 비워두세요."}
+            </p>
+          )}
+          {(contigChoice === "custom" || contigOptions.length === 0) && (
+            <input
+              type="text"
+              className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3"
+              placeholder="A1-10,B5-12"
+              value={customContig}
+              onChange={(e) => onCustomContigChange(e.target.value)}
+            />
+          )}
+          <p className="mt-1 text-xs text-slate-500">
+            업로드한 PDB의 잔기 선택. 신규 디자인이면 비워두세요.
+          </p>
+        </div>
+      )}
+
       {pipeline.key === "diffdock" && (
         <div className="mt-6">
           <DiffdockJobsEditor
@@ -798,7 +1048,41 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         </div>
       )}
 
-      {pipeline.supportsSequence && (
+      {(pipeline.key === "colabfold" || pipeline.key === "alphafold") && (
+        <div className="mt-4">
+          <label className="text-sm font-semibold text-slate-600">예측 유형</label>
+          <div className="mt-1 inline-flex rounded-2xl border border-slate-200 p-1">
+            {[
+              { value: false, label: "Monomer (단일 체인)" },
+              { value: true, label: "Multimer (복합체)" },
+            ].map((opt) => {
+              // AF2 drives the real model_preset param; ColabFold drives a UI-only flag.
+              const active =
+                pipeline.key === "alphafold" ? paramState.model_preset === "multimer" : colabfoldMultimer;
+              const setMultimer = (v: boolean) =>
+                pipeline.key === "alphafold"
+                  ? onParamChange("model_preset", v ? "multimer" : "monomer")
+                  : onColabfoldMultimerChange(v);
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  onClick={() => setMultimer(opt.value)}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    active === opt.value ? "bg-brand-500 text-white" : "text-slate-600 hover:text-brand-600"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {pipeline.key === "alphafold" && (
+            <p className="mt-1 text-xs text-slate-500">Batch submissions must use a single preset.</p>
+          )}
+        </div>
+      )}
+      {pipeline.supportsSequence && !multimerActive && (
         <div className="mt-4">
           <label className="text-sm font-semibold text-slate-600">서열 입력 (선택)</label>
           <textarea
@@ -806,8 +1090,54 @@ function SubmissionPanel(props: SubmissionPanelProps) {
             rows={4}
             value={sequence}
             onChange={(e) => onSequenceChange(e.target.value)}
-            placeholder=">sp|/P12345 예시\nMVTES..."
+            placeholder={">sp|P12345 예시\nMVTES..."}
           />
+        </div>
+      )}
+      {pipeline.supportsSequence && multimerActive && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-semibold text-slate-600">체인별 서열 입력 (복합체)</label>
+            <span className="text-xs text-slate-400">
+              {pipeline.key === "colabfold" ? "체인을 콜론(:)으로 이어 예측합니다" : "체인마다 FASTA 레코드로 전송됩니다"}
+            </span>
+          </div>
+          <div className="mt-2 space-y-3">
+            {multimerChains.map((chain, index) => (
+              <div key={index} className="rounded-2xl border border-slate-200 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-brand-600">
+                    체인 {String.fromCharCode(65 + index)}
+                  </span>
+                  {multimerChains.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => onMultimerChainsChange(multimerChains.filter((_, i) => i !== index))}
+                      className="text-xs text-slate-400 underline hover:text-red-500"
+                    >
+                      삭제
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2 font-mono"
+                  rows={3}
+                  value={chain}
+                  onChange={(e) =>
+                    onMultimerChainsChange(multimerChains.map((c, i) => (i === index ? e.target.value : c)))
+                  }
+                  placeholder={`체인 ${String.fromCharCode(65 + index)} 아미노산 서열 (예: MVTES...)`}
+                />
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => onMultimerChainsChange([...multimerChains, ""])}
+            className="mt-3 rounded-full border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:border-brand-400"
+          >
+            + 체인 추가
+          </button>
         </div>
       )}
       {pipeline.key !== "diffdock" && (
@@ -819,13 +1149,32 @@ function SubmissionPanel(props: SubmissionPanelProps) {
         <div className="mt-4 flex flex-wrap gap-3">
           <label className="flex cursor-pointer items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-700 shadow-sm">
             파일 선택
-            <input type="file" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} />
+            <input
+              type="file"
+              multiple
+              accept={acceptedFiles(pipeline).accept}
+              className="hidden"
+              onChange={(e) => {
+                onFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </label>
           <label className="flex cursor-pointer items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-brand-700 shadow-sm">
             폴더 업로드
-            <input type="file" className="hidden" multiple ref={folderInputRef} onChange={(e) => onFolder(e.target.files)} />
+            <input
+              type="file"
+              className="hidden"
+              multiple
+              ref={folderInputRef}
+              onChange={(e) => {
+                onFolder(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </label>
         </div>
+        <p className="mt-2 text-[11px] text-slate-400">허용 형식: {acceptedFiles(pipeline).hint}</p>
         {uploads.length > 0 ? (
           <ul className="mt-4 space-y-2 text-sm text-slate-600">
             {uploads.map((entry, index) => (
@@ -928,7 +1277,10 @@ function DiffdockJobsEditor({ jobs, onChange, onFileChange, onRemoveJob }: Diffd
                 type="file"
                 accept=".pdb,.cif"
                 className="mt-1 w-full text-xs"
-                onChange={(e) => onFileChange(index, "protein", e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  onFileChange(index, "protein", e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
               />
               <p className="mt-1 text-[11px] text-slate-400">파일을 선택하면 경로가 자동으로 설정됩니다.</p>
             </div>
@@ -961,7 +1313,10 @@ function DiffdockJobsEditor({ jobs, onChange, onFileChange, onRemoveJob }: Diffd
                     type="file"
                     accept=".sdf"
                     className="mt-2 w-full text-xs"
-                    onChange={(e) => onFileChange(index, "ligand", e.target.files?.[0] ?? null)}
+                    onChange={(e) => {
+                      onFileChange(index, "ligand", e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
                   />
                 </>
               ) : (
@@ -1064,9 +1419,14 @@ type JobTableProps = {
   onSelect: (id: string) => void;
   onDownload: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
 };
 
-function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete }: JobTableProps) {
+const CANCELLABLE_STATUSES = new Set([
+  "pending", "submitted", "queued", "in_queue", "running", "in_progress", "processing",
+]);
+
+function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete, onCancel }: JobTableProps) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
@@ -1084,14 +1444,26 @@ function JobTable({ jobs, loading, selectedJobId, onSelect, onDownload, onDelete
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">{job.title}</p>
-                <p className="text-xs text-slate-500">{job.pipeline.toUpperCase()} · {new Date(job.created_at).toLocaleString("ko-KR")}</p>
+                <p className="text-xs text-slate-500">
+                  {job.pipeline.toUpperCase()} · {new Date(job.created_at).toLocaleString("ko-KR")}
+                  {job.owner && <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-500">{job.owner}</span>}
+                </p>
               </div>
               <JobStatusBadge status={job.status} />
             </div>
+            <JobProgress job={job} />
             <div className="mt-3 flex gap-2 text-xs text-slate-500">
               <button className="rounded-full border border-slate-200 px-3 py-1" onClick={() => onSelect(job.id)}>
                 상세보기
               </button>
+              {CANCELLABLE_STATUSES.has((job.status || "").toLowerCase()) && (
+                <button
+                  className="rounded-full border border-amber-300 px-3 py-1 font-semibold text-amber-600"
+                  onClick={() => void onCancel(job.id)}
+                >
+                  정지
+                </button>
+              )}
               <button className="rounded-full border border-slate-200 px-3 py-1" onClick={() => void onDownload(job.id)}>
                 결과 다운로드
               </button>
@@ -1218,7 +1590,7 @@ function ResultPanel({ job, token, onArtifactDownload }: ResultPanelProps) {
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-lg font-semibold text-slate-900">결과 패널</h3>
       <p className="text-sm text-slate-500">선택한 작업: {job.title}</p>
-      {["alphafold", "diffdock"].includes(job.pipeline) && structureArtifacts.length > 0 && (
+      {structureArtifacts.length > 0 && (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-600">3D Structure Viewer</p>

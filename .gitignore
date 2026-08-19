@@ -15,6 +15,10 @@ portal/backend/data/
 # Results / uploads
 results/
 uploads/
+# Runtime storage tree: job uploads, results, and per-user MCP workspaces.
+# STORAGE_ROOT points here in production, so anything under it is user data and
+# must never be committed (a `git add -A` swept a user's uploaded PDB in once).
+storage/
 
 # Python
 __pycache__/
@@ -39,3 +43,14 @@ yarn-error.log*
 
 # Logs
 *.log
+gateway/.env
+portal/frontend/.env.production
+*.env.bak*
+.env.bak.*
+portal/frontend/tsconfig.tsbuildinfo
+sso/.env
+sso/.venv/
+
+# gateway runtime job state (persisted in-flight jobs)
+gateway/jobs_state.json
+gateway/jobs_state.tmp

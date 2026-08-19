@@ -20,6 +20,7 @@ class InputField:
     options: list[dict[str, str]] | None = None
     placeholder: str | None = None
     helper: str | None = None
+    minimum: float | None = None  # for number fields: reject values below this
 
 
 @dataclass
@@ -33,15 +34,32 @@ class PipelineDefinition:
     supports_sequence: bool = False
     requires_archive: bool = False
     preview_kind: str = "generic"
+    # Grouping + scannability for the pipeline picker. `description` is the
+    # one-line card blurb; the long form lives in `instructions`, which the
+    # submission panel shows once a pipeline is selected.
+    category: str = "other"
+    tags: list[str] = field(default_factory=list)
+
+
+# Display order of the pipeline picker sections.
+PIPELINE_CATEGORIES: list[dict[str, str]] = [
+    {"key": "structure", "label": "구조 예측", "blurb": "서열에서 3D 구조를 예측합니다."},
+    {"key": "design", "label": "단백질 디자인", "blurb": "새 백본과 서열을 설계합니다."},
+    {"key": "docking", "label": "도킹 · 동역학 · 정제", "blurb": "결합 포즈, 구조 앙상블, 구조 정제."},
+    {"key": "analysis", "label": "서열 · 유전체 분석", "blurb": "검색, MSA, 유전체 주석."},
+    {"key": "other", "label": "기타", "blurb": ""},
+]
 
 
 PIPELINES: dict[str, PipelineDefinition] = {
     "alphafold": PipelineDefinition(
         key="alphafold",
         label="AlphaFold2",
-        description="Predict protein structures and preview them in 3D.",
+        description="MSA 기반 표준 구조 예측. 단량체·멀티머 지원.",
+        category="structure",
+        tags=["MSA", "멀티머", "정확도 우선"],
         endpoint_attr="alphafold_endpoint_id",
-        instructions="Provide a FASTA file/folder or paste the raw sequence.",
+        instructions="FASTA 파일/폴더를 업로드하거나 서열을 붙여넣고, 모델·DB 옵션을 선택하세요.",
         input_fields=[
             InputField(
                 name="model_preset",
@@ -65,6 +83,33 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 required=True,
                 placeholder="2023-09-01",
             ),
+            InputField(
+                name="models_to_relax",
+                label="완화(relax)할 모델",
+                field_type="select",
+                options=[
+                    {"value": "", "label": "기본 (best)"},
+                    {"value": "best", "label": "best (최고 1개)"},
+                    {"value": "all", "label": "all (5개 전부)"},
+                    {"value": "none", "label": "none (완화 생략, 빠름)"},
+                ],
+                helper="Amber relaxation 대상. 비워두면 워커 기본(best).",
+            ),
+            InputField(
+                name="num_multimer_predictions_per_model",
+                label="모델당 예측 수 (멀티머)",
+                field_type="number",
+                placeholder="1",
+                minimum=1,
+                helper="Multimer일 때 모델당 예측 개수 (기본 1). Monomer에서는 무시됩니다. 참고: AlphaFold2는 recycle 횟수·모델 수 자체는 조절할 수 없습니다.",
+            ),
+            InputField(
+                name="extra_flags",
+                label="추가 플래그 (고급)",
+                field_type="text",
+                placeholder="--models_to_relax=none",
+                helper="run_alphafold.py에 그대로 전달되는 유효한 CLI 플래그. 존재하지 않는 플래그(예: --num_recycle)는 잡을 실패시킵니다. 모르면 비워두세요.",
+            ),
         ],
         supports_sequence=True,
         preview_kind="protein",
@@ -72,9 +117,11 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "diffdock": PipelineDefinition(
         key="diffdock",
         label="DiffDock",
-        description="Run ligand docking jobs and download the ranked poses.",
+        description="단백질-리간드 도킹. 순위별 결합 포즈를 예측합니다.",
+        category="docking",
+        tags=["도킹", "리간드"],
         endpoint_attr="diffdock_endpoint_id",
-        instructions="Upload protein PDBs and ligand files (single sdf or zipped folder).",
+        instructions="수용체 PDB와 리간드 파일(단일 SDF 또는 ZIP 폴더)을 업로드하면 여러 복합체를 한 번에 도킹합니다.",
         input_fields=[],
         requires_archive=True,
         preview_kind="ligand",
@@ -82,9 +129,11 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "phastest": PipelineDefinition(
         key="phastest",
         label="PHASTEST",
-        description="Generate phage functional reports mirroring the current notebook workflow.",
+        description="유전체에서 프로파지를 찾아 기능 리포트를 만듭니다.",
+        category="analysis",
+        tags=["유전체", "리포트"],
         endpoint_attr="phastest_endpoint_id",
-        instructions="Upload the genome FASTA or CSV bundle exported from the helper notebook.",
+        instructions="유전체 FASTA 또는 헬퍼 노트북에서 내보낸 CSV 번들을 업로드하세요.",
         input_fields=[],
         requires_archive=True,
         preview_kind="phage",
@@ -92,7 +141,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "bioemu": PipelineDefinition(
         key="bioemu",
         label="BioEmu",
-        description="단백질 백본의 동적 구조 앙상블을 시퀀스로부터 샘플링합니다.",
+        description="서열에서 동적 구조 앙상블을 샘플링합니다.",
+        category="docking",
+        tags=["앙상블", "오래 걸림"],
         endpoint_attr="bioemu_endpoint_id",
         instructions="단일 체인 아미노산 시퀀스를 입력하세요. 긴 시퀀스는 수 시간이 걸릴 수 있습니다.",
         input_fields=[
@@ -100,15 +151,28 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 name="num_samples",
                 label="샘플 개수",
                 field_type="number",
-                required=True,
                 placeholder="10",
-                helper="추출할 백본 구조 개수.",
+                helper="추출할 백본 구조 개수. 비워두면 기본값 10.",
             ),
             InputField(
                 name="model_name",
                 label="모델",
                 field_type="select",
                 options=[{"value": "bioemu-v1.1", "label": "bioemu-v1.1"}],
+            ),
+            InputField(
+                name="batch_size_100",
+                label="배치 크기 (100잔기 기준)",
+                field_type="number",
+                placeholder="",
+                helper="비워두면 워커가 자동 결정.",
+            ),
+            InputField(
+                name="base_seed",
+                label="랜덤 시드",
+                field_type="number",
+                placeholder="",
+                helper="비워두면 워커 기본. 재현하려면 고정 정수.",
             ),
         ],
         supports_sequence=True,
@@ -117,17 +181,36 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "esmfold": PipelineDefinition(
         key="esmfold",
         label="ESMFold",
-        description="Meta의 ESMFold v1로 단일 시퀀스 구조 예측을 수행합니다 (로컬 GPU).",
+        description="MSA 없이 단일 서열로 빠르게 예측 (로컬 GPU).",
+        category="structure",
+        tags=["MSA 없음", "빠름", "단일 서열"],
         endpoint_attr="esmfold_endpoint_id",
         instructions="아미노산 시퀀스를 붙여넣으세요 (FASTA 다중 레코드 가능).",
-        input_fields=[],
+        input_fields=[
+            InputField(
+                name="num_recycles",
+                label="Recycle 횟수",
+                field_type="number",
+                minimum=1,
+                helper="비워두면 워커 기본값 사용. 늘리면 정확도가 오를 수 있지만 느려집니다.",
+            ),
+            InputField(
+                name="chunk_size",
+                label="Chunk 크기 (메모리)",
+                field_type="number",
+                minimum=1,
+                helper="긴 시퀀스의 GPU 메모리 사용량을 줄입니다 (결과에는 영향 없음). 비워두면 워커 기본값 사용.",
+            ),
+        ],
         supports_sequence=True,
         preview_kind="protein",
     ),
     "esmfold2": PipelineDefinition(
         key="esmfold2",
         label="ESMFold2",
-        description="Biohub Forge API를 통한 최신 단일 시퀀스 구조 예측. 각 사용자가 자신의 Biohub API 키를 직접 입력합니다.",
+        description="Biohub Forge API 단일 서열 예측 (본인 API 키 필요).",
+        category="structure",
+        tags=["MSA 없음", "외부 API", "API 키 필요"],
         endpoint_attr="esmfold2_endpoint_id",
         instructions="아래에 본인 Biohub API 키와 아미노산 시퀀스를 입력하세요. 키는 요청마다 전달되며 서버에 저장되지 않습니다.",
         input_fields=[
@@ -146,7 +229,9 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "rfdiffusion": PipelineDefinition(
         key="rfdiffusion",
         label="RFdiffusion (RFD3)",
-        description="백본 디퓨전 디자인 — 신규(unconditional), 모티프 스캐폴딩, 바인더 설계. Atomworks RFD3(Foundry) 백엔드 사용.",
+        description="백본 생성 — 신규 설계, 모티프 스캐폴딩, 바인더.",
+        category="design",
+        tags=["백본 생성", "바인더", "모티프"],
         endpoint_attr="rfdiffusion_endpoint_id",
         instructions=(
             "신규 디자인: 파일 없이 Length에 잔기 수만 입력 (예: 100). "
@@ -181,13 +266,22 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 required=True,
                 placeholder="1",
             ),
+            InputField(
+                name="partial_t",
+                label="Partial diffusion 타임스텝",
+                field_type="number",
+                minimum=1,
+                helper="선택 항목: 업로드한 PDB를 부분적으로만 노이즈화해 재설계 (partial diffusion). PDB+Contig와 함께 사용. 비워두면 전체 디퓨전.",
+            ),
         ],
         preview_kind="protein",
     ),
     "proteinmpnn": PipelineDefinition(
         key="proteinmpnn",
         label="ProteinMPNN",
-        description="주어진 백본 구조에 맞는 단백질 시퀀스를 디자인합니다.",
+        description="백본에 맞는 서열 설계 (inverse folding).",
+        category="design",
+        tags=["서열 설계", "PDB 입력"],
         endpoint_attr="proteinmpnn_endpoint_id",
         instructions="하나 이상의 PDB 파일을 업로드하세요. 결과는 FASTA 디자인입니다.",
         input_fields=[
@@ -195,14 +289,179 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 name="num_seq_per_target",
                 label="타겟당 시퀀스 수",
                 field_type="number",
-                required=True,
-                placeholder="8",
+                placeholder="1",
+                helper="비워두면 기본값 1.",
             ),
             InputField(
                 name="sampling_temp",
                 label="샘플링 온도",
                 field_type="text",
                 placeholder="0.1",
+                helper="비워두면 기본값 0.1. 높을수록 시퀀스 다양성이 커집니다.",
+            ),
+            InputField(
+                name="batch_size",
+                label="배치 크기",
+                field_type="number",
+                placeholder="1",
+                helper="비워두면 기본값 1.",
+            ),
+            InputField(
+                name="backbone_noise",
+                label="백본 노이즈 (Å)",
+                field_type="text",
+                placeholder="0.0",
+                helper="비워두면 기본값 0.0.",
+            ),
+            InputField(
+                name="seed",
+                label="랜덤 시드",
+                field_type="number",
+                placeholder="",
+                helper="비워두면 워커 기본. 재현하려면 고정 정수.",
+            ),
+            InputField(
+                name="pdb_path_chains",
+                label="디자인할 체인",
+                field_type="text",
+                placeholder="A,B",
+                helper="재설계할 체인. 비워두면 전체 체인을 재설계합니다. 나머지 체인은 결합 상대(context)로 그대로 유지됩니다.",
+            ),
+            InputField(
+                name="design_mode",
+                label="설계 모드",
+                field_type="select",
+                options=[
+                    {"value": "manual", "label": "일반 (직접 지정, 기본)"},
+                    {"value": "antibody", "label": "항체 (IMGT 기반 CDR 자동 마스킹)"},
+                ],
+                helper=(
+                    "항체 모드를 고르면 업로드한 항체 서열을 ANARCII로 IMGT 넘버링하여 CDR 루프만 "
+                    "재설계 대상으로 남기고 나머지는 자동으로 고정합니다 (아래 '고정할 잔기'는 이 모드에서 무시됨). "
+                    "결합 항원 구조 없이 서열만으로 판단하므로, 항원-접촉 기반 필터링(antigen_pipeline의 전체 분석)보다는 "
+                    "단순화된 버전입니다."
+                ),
+            ),
+            InputField(
+                name="include_framework",
+                label="Framework Region(FR) 포함 (항체 모드)",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (CDR만 재설계, 기본)"},
+                    {"value": "true", "label": "예 (FR도 재설계 대상에 포함)"},
+                ],
+                helper="항체 모드에서만 적용됩니다. VHH 골격 유지에 필요한 4개 위치(IMGT 37/44/45/47)와 시스테인은 FR 포함 시에도 항상 고정됩니다.",
+            ),
+            InputField(
+                name="mutable_include",
+                label="추가로 재설계 허용할 잔기 (항체 모드)",
+                field_type="text",
+                placeholder="H1,L5-8",
+                helper="선택 항목, 항체 모드 전용. CDR/FR 판정과 무관하게 강제로 재설계 대상에 포함합니다 (시스테인 제외).",
+            ),
+            InputField(
+                name="mutable_exclude",
+                label="재설계에서 제외할 잔기 (항체 모드)",
+                field_type="text",
+                placeholder="H105,H108-110",
+                helper="선택 항목, 항체 모드 전용. CDR이라도 이 목록에 있으면 강제로 고정합니다.",
+            ),
+            InputField(
+                name="fixed_positions",
+                label="고정할 잔기 (일반 모드)",
+                field_type="text",
+                placeholder="A1,A5-8,B3",
+                helper="일반 모드 전용 (항체 모드에서는 무시됨). 재설계하지 않고 원래 서열을 유지할 잔기. 예: A1-10 (범위), B33 (단일).",
+            ),
+            InputField(
+                name="use_soluble_model",
+                label="가용성(soluble) 모델 사용",
+                field_type="select",
+                options=[
+                    {"value": "true", "label": "예 (기본, 가용성 최적화 가중치)"},
+                    {"value": "false", "label": "아니오 (표준 가중치)"},
+                ],
+                helper="비워두면 예(가용성 모델)로 처리됩니다.",
+            ),
+        ],
+        requires_archive=True,
+        preview_kind="protein",
+    ),
+    "antifold": PipelineDefinition(
+        key="antifold",
+        label="AntiFold",
+        description="항체 전용 서열 설계 — CDR/FR 재설계.",
+        category="design",
+        tags=["서열 설계", "항체 전용"],
+        endpoint_attr="antifold_endpoint_id",
+        instructions=(
+            "항체 가변 도메인 구조(PDB)를 업로드하세요. IMGT 넘버링은 자동으로 처리되므로 "
+            "원본 구조를 그대로 올리면 됩니다."
+        ),
+        input_fields=[
+            InputField(
+                name="heavy_chain",
+                label="Heavy chain ID",
+                field_type="text",
+                placeholder="H",
+                helper="비워두면 H. 나노바디(단일 도메인)는 대신 'Nanobody chain'을 채우세요.",
+            ),
+            InputField(
+                name="light_chain",
+                label="Light chain ID",
+                field_type="text",
+                placeholder="L",
+                helper="비워두면 L. 나노바디를 지정하면 이 필드는 무시됩니다.",
+            ),
+            InputField(
+                name="nanobody_chain",
+                label="Nanobody chain ID (단일 도메인, VHH)",
+                field_type="text",
+                placeholder="",
+                helper="입력하면 heavy/light chain 대신 이 체인 하나만 단일 도메인 항체로 처리합니다.",
+            ),
+            InputField(
+                name="antigen_chain",
+                label="Antigen chain ID (선택)",
+                field_type="text",
+                placeholder="A",
+                helper="항원과의 복합체 구조라면 입력하세요. 항원을 컨텍스트로 포함해 재설계합니다.",
+            ),
+            InputField(
+                name="regions",
+                label="재설계할 리전 (IMGT)",
+                field_type="select",
+                options=[
+                    {"value": "CDR1 CDR2 CDR3H", "label": "CDR만 (기본, CDR-H3 포함)"},
+                    {"value": "CDRH CDRL", "label": "CDR만 (H+L 체인 전체)"},
+                    {"value": "FWH FWL", "label": "Framework(FR)만"},
+                    {"value": "all", "label": "전체 (CDR + FR)"},
+                ],
+                helper=(
+                    "Framework(FR)를 고르면 ProteinMPNN 대신 항체 전용 모델(AntiFold)로 "
+                    "framework 영역을 재설계합니다 - 일반 모델보다 항체 자연성/발현성에 유리합니다."
+                ),
+            ),
+            InputField(
+                name="num_seq_per_target",
+                label="타겟당 시퀀스 수",
+                field_type="number",
+                placeholder="8",
+                helper="비워두면 기본값 8.",
+            ),
+            InputField(
+                name="sampling_temp",
+                label="샘플링 온도",
+                field_type="text",
+                placeholder="0.20",
+                helper="비워두면 기본값 0.20. 낮을수록 원본에 가까운(보수적인) 시퀀스가 나옵니다.",
+            ),
+            InputField(
+                name="seed",
+                label="랜덤 시드",
+                field_type="number",
+                placeholder="42",
+                helper="비워두면 기본값 42.",
             ),
         ],
         requires_archive=True,
@@ -211,17 +470,86 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "mmseqs": PipelineDefinition(
         key="mmseqs",
         label="MMseqs2",
-        description="로컬 UniRef 데이터베이스에 대한 시퀀스 검색/MSA 생성 (MMseqs2).",
+        description="로컬 UniRef 검색으로 MSA를 생성합니다.",
+        category="analysis",
+        tags=["MSA 생성", "검색"],
         endpoint_attr="mmseqs_endpoint_id",
         instructions="쿼리 시퀀스를 붙여넣으세요 (혹은 FASTA 업로드). UniRef90 검색은 수 분 이상 걸릴 수 있습니다.",
-        input_fields=[],
+        input_fields=[
+            InputField(
+                name="max_seqs",
+                label="최대 히트 수",
+                field_type="number",
+                placeholder="",
+                helper="MSA에 포함할 최대 서열 수. 비워두면 워커 기본.",
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="generic",
+    ),
+    "ppiformer": PipelineDefinition(
+        key="ppiformer",
+        label="PPIformer",
+        description="변이가 결합 친화도를 얼마나 바꾸는지(ΔΔG) 예측합니다.",
+        category="analysis",
+        tags=["결합 ΔΔG", "변이 효과", "복합체 입력"],
+        endpoint_attr="ppiformer_endpoint_id",
+        instructions=(
+            "두 단백질이 결합한 복합체 구조(PDB)를 업로드하고, 평가할 변이를 적으세요. "
+            "값이 낮을수록(음수) 결합이 좋아진다는 뜻입니다."
+        ),
+        input_fields=[
+            InputField(
+                name="mutations",
+                label="변이 목록",
+                field_type="textarea",
+                required=True,
+                placeholder="YH33W\nDH31K, YH33F",
+                helper=(
+                    "형식은 <원래잔기><체인><번호><바뀔잔기> (예: YH33W = H체인 33번 Y→W). "
+                    "한 줄이 후보 하나입니다. 한 줄에 쉼표나 공백으로 여러 개를 적으면 "
+                    "그 변이들을 모두 가진 조합 후보 하나로 평가합니다."
+                ),
+            ),
+        ],
+        requires_archive=True,
+        preview_kind="generic",
+    ),
+    "anarcii": PipelineDefinition(
+        key="anarcii",
+        label="ANARCII",
+        description="항체 서열에 IMGT 번호를 매기고 CDR 구간을 찾습니다.",
+        category="analysis",
+        tags=["항체 전용", "IMGT 번호", "CDR 검출"],
+        endpoint_attr="anarcii_endpoint_id",
+        instructions=(
+            "항체 가변 도메인 서열을 붙여넣으세요. FASTA를 붙여넣으면 레코드별로 각각 "
+            "번호를 매깁니다. 도메인 종류(VH/VL/VHH)와 CDR 구간은 자동으로 판별됩니다."
+        ),
+        input_fields=[
+            InputField(
+                name="scfv",
+                label="scFv (VH-링커-VL 단일 서열)",
+                field_type="select",
+                options=[
+                    {"value": "", "label": "아니오 (기본) - 서열 하나가 도메인 하나"},
+                    {"value": "true", "label": "예 - 한 서열에서 VH와 VL을 모두 찾기"},
+                ],
+                helper=(
+                    "scFv처럼 두 도메인이 링커로 이어진 단일 서열이면 '예'를 고르세요. "
+                    "보통의 VH/VL/VHH 서열은 비워두면 됩니다."
+                ),
+            ),
+        ],
         supports_sequence=True,
         preview_kind="generic",
     ),
     "rosetta_relax": PipelineDefinition(
         key="rosetta_relax",
         label="Rosetta Relax",
-        description="Rosetta FastRelax로 백본/사이드체인 충돌을 완화합니다.",
+        description="Rosetta FastRelax로 구조 충돌을 완화합니다.",
+        category="docking",
+        tags=["구조 정제", "PDB 입력"],
         endpoint_attr="rosetta_relax_endpoint_id",
         instructions="완화할 PDB 파일을 업로드하세요.",
         input_fields=[
@@ -230,6 +558,14 @@ PIPELINES: dict[str, PipelineDefinition] = {
                 label="생성 구조 수",
                 field_type="number",
                 placeholder="1",
+                helper="비워두면 기본값 1.",
+            ),
+            InputField(
+                name="extra_flags",
+                label="추가 Rosetta 플래그 (고급)",
+                field_type="text",
+                placeholder="",
+                helper="FastRelax에 그대로 전달되는 추가 플래그. 모르면 비워두세요.",
             ),
         ],
         requires_archive=True,
@@ -238,21 +574,27 @@ PIPELINES: dict[str, PipelineDefinition] = {
     "colabfold": PipelineDefinition(
         key="colabfold",
         label="ColabFold",
-        description="ColabFold를 통한 AlphaFold2 추론 (로컬 MMseqs2 MSA 사용).",
+        description="AlphaFold2 + 로컬 MMseqs2 MSA. AF2보다 빠릅니다.",
+        category="structure",
+        tags=["MSA", "멀티머", "빠름"],
         endpoint_attr="colabfold_endpoint_id",
-        instructions="아미노산 시퀀스를 붙여넣으세요 (FASTA 다중 레코드 가능).",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 여러 FASTA 레코드로 넣으면 각 서열이 독립적으로(배치) 예측됩니다.",
         input_fields=[
             InputField(
                 name="num_recycle",
                 label="Recycle 횟수",
                 field_type="number",
                 placeholder="3",
+                minimum=1,
+                helper="비워두면 기본값 3.",
             ),
             InputField(
                 name="num_models",
                 label="모델 수",
                 field_type="number",
                 placeholder="5",
+                minimum=1,
+                helper="비워두면 기본값 5.",
             ),
             InputField(
                 name="msa_mode",
@@ -267,7 +609,151 @@ PIPELINES: dict[str, PipelineDefinition] = {
         supports_sequence=True,
         preview_kind="protein",
     ),
+    "alphafold3": PipelineDefinition(
+        key="alphafold3",
+        label="AlphaFold3",
+        description="AF3 구조 예측. 리간드·핵산 포함 복합체까지.",
+        category="structure",
+        tags=["MSA", "복합체", "비상업 연구용"],
+        endpoint_attr="alphafold3_endpoint_id",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB).",
+        input_fields=[
+            InputField(
+                name="num_recycles",
+                label="Recycle 횟수",
+                field_type="number",
+                placeholder="10",
+                minimum=1,
+                helper="비워두면 AF3 기본값 사용.",
+            ),
+            InputField(
+                name="num_diffusion_samples",
+                label="Diffusion 샘플 수",
+                field_type="number",
+                placeholder="5",
+                minimum=1,
+                helper="비워두면 AF3 기본값 사용.",
+            ),
+            InputField(
+                name="seed",
+                label="Random seed",
+                field_type="number",
+                helper="비워두면 워커 기본값(1) 사용. 같은 입력·seed면 결과가 재현됩니다.",
+            ),
+            InputField(
+                name="af3_json",
+                label="AF3 입력 JSON 직접 지정 (고급)",
+                field_type="textarea",
+                helper=(
+                    "리간드·이온·RNA/DNA·변형 잔기·MSA/템플릿 지정·공유결합 등 AF3 공식 입력 "
+                    "스키마의 모든 기능을 쓰려면, AF3 fold-input 형식의 JSON을 여기 붙여넣으세요. "
+                    "채워지면 위 서열/Recycle/Diffusion/seed 입력은 전부 무시되고 이 JSON이 그대로 "
+                    "AF3에 전달됩니다. (DeepMind AF3 입력 문서 참고)"
+                ),
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="protein",
+    ),
+    "boltz2": PipelineDefinition(
+        key="boltz2",
+        label="Boltz-2",
+        description="리간드와 함께 접고 결합 친화도까지 예측합니다.",
+        category="structure",
+        tags=["리간드", "친화도", "MSA 선택"],
+        endpoint_attr="boltz2_endpoint_id",
+        instructions="아미노산 시퀀스를 붙여넣으세요. 복합체(멀티머)를 예측하려면 한 줄에 체인을 콜론(:)으로 이어서 입력하세요 (예: SEQA:SEQB). 리간드를 함께 접으려면 아래에 SMILES를 입력하세요.",
+        input_fields=[
+            InputField(
+                name="ligand_smiles",
+                label="리간드 SMILES (선택)",
+                field_type="text",
+                placeholder="CC(=O)Oc1ccccc1C(=O)O",
+                helper="입력하면 단백질-리간드 복합체를 함께 접습니다 (Boltz-2의 핵심 기능). 비워두면 단백질(복합체)만 예측합니다.",
+            ),
+            InputField(
+                name="predict_affinity",
+                label="결합 친화도(affinity) 예측",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (기본)"},
+                    {"value": "true", "label": "예 (리간드 SMILES 필요)"},
+                ],
+                helper="리간드 SMILES를 입력한 경우에만 동작합니다. 예측값은 결과의 affinity 항목에 담깁니다.",
+            ),
+            InputField(
+                name="use_msa_server",
+                label="MSA 사용",
+                field_type="select",
+                options=[
+                    {"value": "false", "label": "아니오 (단일 서열, 기본, 빠름)"},
+                    {"value": "true", "label": "예 (Boltz MSA 서버 검색, 느림)"},
+                ],
+                helper="기본은 MSA 없이 도는 빠른 모드입니다 (ESMFold와 같은 용도의 빠른 필터). 정확도를 높이려면 MSA 사용을 켜세요.",
+            ),
+            InputField(
+                name="recycling_steps",
+                label="Recycle 횟수",
+                field_type="number",
+                placeholder="3",
+                minimum=1,
+                helper="비워두면 기본값 3.",
+            ),
+            InputField(
+                name="sampling_steps",
+                label="Diffusion 샘플링 스텝",
+                field_type="number",
+                placeholder="200",
+                minimum=1,
+                helper="비워두면 기본값 200.",
+            ),
+            InputField(
+                name="diffusion_samples",
+                label="Diffusion 샘플 수",
+                field_type="number",
+                placeholder="1",
+                minimum=1,
+                helper="비워두면 기본값 1.",
+            ),
+            InputField(
+                name="seed",
+                label="Random seed",
+                field_type="number",
+                helper="비워두면 시드 없이 실행됩니다 (매번 결과가 조금씩 달라질 수 있음).",
+            ),
+        ],
+        supports_sequence=True,
+        preview_kind="protein",
+    ),
 }
+
+
+# Display order inside the picker (grouped by `category`, see PIPELINE_CATEGORIES).
+# Anything missing here falls back to PIPELINES insertion order.
+PIPELINE_ORDER: list[str] = [
+    "alphafold",
+    "colabfold",
+    "alphafold3",
+    "boltz2",
+    "esmfold",
+    "esmfold2",
+    "rfdiffusion",
+    "proteinmpnn",
+    "antifold",
+    "diffdock",
+    "bioemu",
+    "rosetta_relax",
+    "mmseqs",
+    "anarcii",
+    "ppiformer",
+    "phastest",
+]
+
+
+def ordered_pipelines() -> list[PipelineDefinition]:
+    """PIPELINES sorted for display: PIPELINE_ORDER first, then any newcomers."""
+    ranked = {key: index for index, key in enumerate(PIPELINE_ORDER)}
+    return sorted(PIPELINES.values(), key=lambda p: ranked.get(p.key, len(ranked)))
 
 
 class RunpodClient:
@@ -289,6 +775,13 @@ class RunpodClient:
         url = f"{RUNPOD_BASE}/{endpoint_id}/status/{job_id}"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         response = self.http.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    def cancel(self, endpoint_id: str, job_id: str) -> Dict[str, Any]:
+        url = f"{RUNPOD_BASE}/{endpoint_id}/cancel/{job_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        response = self.http.post(url, headers=headers)
         response.raise_for_status()
         return response.json()
 
