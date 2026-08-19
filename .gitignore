@@ -15,6 +15,10 @@ portal/backend/data/
 # Results / uploads
 results/
 uploads/
+# Runtime storage tree: job uploads, results, and per-user MCP workspaces.
+# STORAGE_ROOT points here in production, so anything under it is user data and
+# must never be committed (a `git add -A` swept a user's uploaded PDB in once).
+storage/
 
 # Python
 __pycache__/
