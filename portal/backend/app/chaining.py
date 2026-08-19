@@ -29,6 +29,16 @@ CHAIN_META: dict[str, dict] = {
     "diffdock":      {"produces": [ROLE_COMPLEX],   "consumes": {ROLE_STRUCTURE: "files"}},
     "rosetta_relax": {"produces": [ROLE_STRUCTURE], "consumes": {ROLE_STRUCTURE: "files"}},
     "mmseqs":        {"produces": [ROLE_MSA],       "consumes": {ROLE_SEQUENCE: "sequence"}},
+    # Structure predictors that arrived after the first chaining pass. Without
+    # entries here `from_job_id` into them was rejected outright ("cannot feed"),
+    # so an agent could not fold a designed sequence with AF3/Boltz-2 or redesign
+    # a predicted antibody with AntiFold.
+    "alphafold3":    {"produces": [ROLE_STRUCTURE], "consumes": {ROLE_SEQUENCE: "sequence"}},
+    "boltz2":        {"produces": [ROLE_COMPLEX, ROLE_STRUCTURE],
+                      "consumes": {ROLE_SEQUENCE: "sequence"}},
+    "antifold":      {"produces": [ROLE_SEQUENCE],  "consumes": {ROLE_STRUCTURE: "files"}},
+    "anarcii":       {"produces": [],               "consumes": {ROLE_SEQUENCE: "sequence"}},
+    "ppiformer":     {"produces": [],               "consumes": {ROLE_STRUCTURE: "files"}},
 }
 
 # artifact kinds that satisfy a role delivered via files

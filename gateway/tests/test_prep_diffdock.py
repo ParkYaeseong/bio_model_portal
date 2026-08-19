@@ -118,3 +118,49 @@ def test_diffdock_passthrough_preformed():
     assert out.get("cmd") == "python"
     # internal-only keys stripped on passthrough
     assert "input_archive" not in out
+
+
+def _archive(files: dict[str, str]) -> dict:
+    """Portal-style input_archive (tar.gz, base64) built from name -> text."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return {"kind": "uploaded", "file_names": list(files),
+            "base64": base64.b64encode(buf.getvalue()).decode()}
+
+
+def test_diffdock_uses_an_sdf_attached_in_the_upload_archive():
+    # The UI builds a worker-ready payload from its own form; an MCP/chat run
+    # can only attach files, and the SDF used to be dropped on the floor.
+    out = diffdock.build_input({
+        "complex_name": "ok",
+        "input_archive": _archive({"rec.pdb": "ATOM      1  N\n", "lig.sdf": "  Mrv  \n$$$$\n"}),
+    })
+    assert [f["filename"] for f in out["sdf_files"]] == ["ok.sdf"]
+    assert "Mrv" in base64.b64decode(out["sdf_files"][0]["data_b64"]).decode()
+    assert "inputs/ok.sdf" in base64.b64decode(out["protein_ligand_csv"]["data_b64"]).decode()
+
+
+def test_a_smiles_parameter_still_wins_over_an_attached_sdf():
+    out = diffdock.build_input({
+        "complex_name": "ok",
+        "ligand_smiles": "CCO",
+        "input_archive": _archive({"rec.pdb": "ATOM      1  N\n", "lig.sdf": "  Mrv  \n$$$$\n"}),
+    })
+    assert out["sdf_files"] == []
+    assert "CCO" in base64.b64decode(out["protein_ligand_csv"]["data_b64"]).decode()
+
+
+def test_diffdock_still_fails_loudly_with_no_ligand_at_all():
+    with pytest.raises(ValueError, match="ligand"):
+        diffdock.build_input({
+            "complex_name": "ok",
+            "input_archive": _archive({"rec.pdb": "ATOM      1  N\n"}),
+        })

@@ -179,6 +179,69 @@ export default function McpSettingsPage() {
           </pre>
         </div>
 
+        {/* The `files` contract is the one thing agents get wrong: an LLM will
+            happily send files:[{name: "data/x.pdb"}] believing the server reads
+            that path. It never did -- the entry was dropped and the job failed
+            later in the gateway -- so the accepted forms are spelled out here. */}
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-slate-900">파일 입력 규약</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            AntiFold·ProteinMPNN·PPIformer처럼 구조(PDB/CIF)를 받는 모델은{" "}
+            <span className="font-mono">run_model</span>의 <span className="font-mono">files</span>로 파일을
+            넘깁니다. <strong>
+              <span className="font-mono">name</span>은 파일 이름일 뿐, 서버가 읽는 경로가 아닙니다.
+            </strong>{" "}
+            각 항목은 아래 네 가지 중 하나로 실제 내용을 반드시 실어야 하며, 없으면 제출 단계에서 바로
+            거부됩니다.
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-4 font-semibold">형태</th>
+                  <th className="py-2 font-semibold">쓰는 경우</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-600">
+                <tr>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","text":"ATOM ..."}`}</td>
+                  <td className="py-2">PDB·CIF·FASTA·SDF 등 텍스트 파일 (권장)</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"name":"ab.pdb","base64":"..."}`}</td>
+                  <td className="py-2">바이너리 파일</td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"file_id":"ab.pdb"}`}</td>
+                  <td className="py-2">
+                    <span className="font-mono">upload_file</span>로 미리 올린 파일. 큰 파일은{" "}
+                    <span className="font-mono">append: true</span>로 나눠 올리고 반환된{" "}
+                    <span className="font-mono">sha256</span>로 무결성을 확인하세요.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 pr-4 font-mono text-xs">{`{"path":"ab.pdb"}`}</td>
+                  <td className="py-2">
+                    포털 서버에서 도는 클라이언트 전용. <span className="font-mono">list_files</span>가
+                    알려주는 본인 워크스페이스 폴더 안의 파일만 읽습니다.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-4 text-sm text-slate-500">
+            결과는 <span className="font-mono">job_result</span>로 파일 목록을 보고{" "}
+            <span className="font-mono">download_artifact(job_id, artifact_id)</span>로 내용까지 바로 읽을 수
+            있습니다(<span className="font-mono">save_to_workspace: true</span>를 주면 다음 모델의 입력으로
+            그대로 이어서 쓸 수 있습니다).
+          </p>
+          <p className="mt-3 text-xs text-slate-400">
+            서열 입력 모델(AlphaFold2/3·Boltz-2·ColabFold·ESMFold 등)은 <span className="font-mono">sequence</span>
+            를 쓰고, 복합체는 체인을 <span className="font-mono">:</span>로 이어 붙입니다. 필수 입력이 빠지면
+            제출 전에 무엇이 필요한지 알려주는 에러가 돌아옵니다.
+          </p>
+        </div>
+
         {/* Runcell Science runs on each member's own machine: it drives the
             Claude Code / Codex CLI that person is already signed in to, so one
             shared copy would mean one shared seat and one shared token. */}

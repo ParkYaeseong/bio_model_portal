@@ -62,8 +62,13 @@ def build_input(payload: dict) -> dict:
     if not str(pdb_text or "").strip():
         raise ValueError("DiffDock requires protein_pdb text")
 
+    ligand_sdf = out.get("ligand_sdf")
+    if not str(ligand_sdf or "").strip() and not str(out.get("ligand_smiles") or "").strip():
+        # MCP/chat path: the ligand may have been attached as an .sdf inside the
+        # upload archive rather than typed as a SMILES/ligand_sdf parameter.
+        ligand_sdf = structure.extract_ligand_text(out)
     smiles, sdf = ligand_text.normalize_diffdock_ligand_inputs(
-        out.get("ligand_smiles"), out.get("ligand_sdf")
+        out.get("ligand_smiles"), ligand_sdf
     )
     if not (smiles or sdf):
         raise ValueError("DiffDock requires ligand_smiles or ligand_sdf")

@@ -37,6 +37,27 @@ def extract_fasta_text(payload: dict) -> str | None:
                     return f.read().decode("utf-8", errors="replace")
     return None
 
+_LIGAND_SUFFIXES = (".sdf", ".mol")
+
+def extract_ligand_text(payload: dict) -> str | None:
+    """Return SDF/MOL text from payload.input_archive, if the upload carries a
+    ligand file. The UI's DiffDock form builds a worker-ready payload itself, so
+    an archive-delivered ligand only happens on the MCP/chat path -- where it
+    used to be dropped ("DiffDock requires ligand_smiles or ligand_sdf") even
+    though the user had attached the SDF."""
+    archive = payload.get("input_archive")
+    if not (isinstance(archive, dict) and archive.get("base64")):
+        return None
+    raw = base64.b64decode(archive["base64"])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+        members = sorted((m for m in tar.getmembers() if m.isfile()), key=lambda m: m.name)
+        for m in members:
+            if m.name.lower().endswith(_LIGAND_SUFFIXES):
+                f = tar.extractfile(m)
+                if f:
+                    return f.read().decode("utf-8", errors="replace")
+    return None
+
 def preprocess(pdb_text: str, chains: list[str] | None = None):
     """Normalize (mmcif->pdb, first model) then strip non-positive resseq + renumber from 1.
     Returns (clean_pdb_text, mapping)."""

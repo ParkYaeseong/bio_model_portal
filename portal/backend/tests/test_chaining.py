@@ -103,3 +103,19 @@ def test_plan_chain_explicit_ids_wrong_kind():
     src = _job("rfdiffusion", [_art("a1", "stdout.log", "log")])
     with pytest.raises(chaining.ChainError, match="not valid file inputs"):
         chaining.plan_chain(None, src, "diffdock", source_artifact_ids=["a1"])
+
+
+def test_designed_sequences_can_feed_the_newer_folding_models():
+    # AF3/Boltz-2/AntiFold/PPIformer/ANARCII arrived after the first chaining
+    # pass and were unreachable from `from_job_id` until they were registered.
+    assert chaining.compatible_role("proteinmpnn", "alphafold3") == ("sequence", "sequence")
+    assert chaining.compatible_role("proteinmpnn", "boltz2") == ("sequence", "sequence")
+    assert chaining.compatible_role("antifold", "colabfold") == ("sequence", "sequence")
+    assert chaining.compatible_role("proteinmpnn", "anarcii") == ("sequence", "sequence")
+
+
+def test_predicted_structures_can_feed_structure_consumers():
+    assert chaining.compatible_role("alphafold3", "ppiformer") == ("structure", "files")
+    assert chaining.compatible_role("boltz2", "antifold") == ("structure", "files")
+    assert chaining.compatible_role("colabfold", "antifold") == ("structure", "files")
+    assert "ppiformer" in chaining.compatible_targets("colabfold")

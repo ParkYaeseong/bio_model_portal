@@ -79,7 +79,8 @@ def test_run_model_chains_structure_files(monkeypatch, tmp_path):
         pdb = tmp_path / "backbone.pdb"; pdb.write_text("ATOM  1  N\n")
         src = _finished_job(db, u, "rfdiffusion", [("backbone.pdb", pdb, "structure")])
         captured = {}; _capture_create(monkeypatch, captured)
-        r = tools.run_model(db, u, {"pipeline": "diffdock", "from_job_id": src.id})
+        r = tools.run_model(db, u, {"pipeline": "diffdock", "from_job_id": src.id,
+                                    "parameters": {"ligand_smiles": "CCO"}})
         assert r["ok"] is True
         assert "backbone.pdb" in captured["input_files"]
 
@@ -105,6 +106,7 @@ def test_run_model_chain_source_artifact_ids_override(monkeypatch, tmp_path):
         picked = next(a.id for a in src.artifacts if a.file_name == "pick.pdb")
         captured = {}; _capture_create(monkeypatch, captured)
         r = tools.run_model(db, u, {"pipeline": "diffdock", "from_job_id": src.id,
+                                    "parameters": {"ligand_smiles": "CCO"},
                                     "source_artifact_ids": [picked]})
         assert r["ok"] is True
         assert captured["input_files"] == ["pick.pdb"]
@@ -176,3 +178,113 @@ def test_run_chain_unknown_pipeline_errors(monkeypatch):
         u = _user(db)
         r = tools.run_chain(db, u, {"steps": [{"pipeline": "nope"}]})
         assert r["ok"] is False and "unknown pipeline" in r["error"].lower()
+
+
+# --- file staging + artifact reading (the MCP file bridge) ------------------
+
+def test_upload_file_then_run_model_by_file_id(monkeypatch, tmp_path):
+    with SessionLocal() as db:
+        u = _user(db)
+        up = tools.upload_file(db, u, {"name": "ab.pdb", "text": "ATOM      1  N\n"})
+        assert up["ok"] is True and up["file_id"] == "ab.pdb"
+        captured = {}; _capture_create(monkeypatch, captured)
+        r = tools.run_model(db, u, {
+            "pipeline": "antifold",
+            "files": [{"file_id": up["file_id"]}],
+            "parameters": {"heavy_chain": "H", "light_chain": "L"},
+        })
+        assert r["ok"] is True
+        assert captured["input_files"] == ["ab.pdb"]
+
+
+def test_upload_file_appends_chunks_and_reports_a_checksum():
+    with SessionLocal() as db:
+        u = _user(db)
+        tools.upload_file(db, u, {"name": "big.pdb", "text": "PART1"})
+        second = tools.upload_file(db, u, {"name": "big.pdb", "text": "PART2", "append": True})
+        assert second["size_bytes"] == 10
+        import hashlib
+        assert second["sha256"] == hashlib.sha256(b"PART1PART2").hexdigest()
+
+
+def test_upload_file_without_content_is_refused():
+    with SessionLocal() as db:
+        u = _user(db)
+        r = tools.upload_file(db, u, {"name": "ab.pdb"})
+        assert r["ok"] is False and "base64" in r["error"]
+
+
+def test_list_files_reports_the_workspace_directory():
+    with SessionLocal() as db:
+        u = _user(db)
+        tools.upload_file(db, u, {"name": "ab.pdb", "text": "ATOM\n"})
+        r = tools.list_files(db, u, {})
+        assert r["ok"] is True
+        assert r["workspace_dir"].endswith(str(u.id))
+        assert "ab.pdb" in [f["file_id"] for f in r["files"]]
+
+
+def test_run_model_rejects_a_name_only_file():
+    with SessionLocal() as db:
+        u = _user(db)
+        r = tools.run_model(db, u, {"pipeline": "antifold",
+                                    "files": [{"name": "data/ab.pdb"}]})
+        assert r["ok"] is False
+        assert "no file content" in r["error"]
+
+
+def test_download_artifact_returns_text_content(tmp_path):
+    with SessionLocal() as db:
+        u = _user(db)
+        out = tmp_path / "output.json"
+        out.write_text('{"score": 1.5}')
+        job = _finished_job(db, u, "antifold", [("output.json", out, "table")])
+        artifact_id = job.artifacts[0].id
+        r = tools.download_artifact(db, u, {"job_id": job.id, "artifact_id": artifact_id})
+        assert r["ok"] is True and r["encoding"] == "text"
+        assert r["content"] == '{"score": 1.5}' and r["truncated"] is False
+
+
+def test_download_artifact_by_file_name_pages_and_saves_to_workspace(tmp_path):
+    with SessionLocal() as db:
+        u = _user(db)
+        out = tmp_path / "design.fasta"
+        out.write_text(">d1\nACDEFGHIKL\n")
+        job = _finished_job(db, u, "antifold", [("design.fasta", out, "generic")])
+        r = tools.download_artifact(db, u, {"job_id": job.id, "file_name": "design.fasta",
+                                            "max_bytes": 4, "save_to_workspace": True})
+        assert r["content"] == ">d1\n" and r["truncated"] is True
+        assert r["workspace"]["file_id"] == "design.fasta"
+        rest = tools.download_artifact(db, u, {"job_id": job.id, "file_name": "design.fasta",
+                                               "offset": 4})
+        assert rest["content"] == "ACDEFGHIKL\n" and rest["truncated"] is False
+
+
+def test_download_artifact_encodes_binary_as_base64(tmp_path):
+    with SessionLocal() as db:
+        u = _user(db)
+        blob = tmp_path / "results.tar.gz"
+        blob.write_bytes(b"\x1f\x8b\x08\x00binary")
+        job = _finished_job(db, u, "antifold", [("results.tar.gz", blob, "archive")])
+        r = tools.download_artifact(db, u, {"job_id": job.id, "file_name": "results.tar.gz"})
+        import base64
+        assert r["encoding"] == "base64"
+        assert base64.b64decode(r["content"]) == b"\x1f\x8b\x08\x00binary"
+
+
+def test_download_artifact_enforces_ownership(tmp_path):
+    with SessionLocal() as db:
+        u1, u2 = _user(db), _user(db)
+        out = tmp_path / "o.json"; out.write_text("{}")
+        job = _finished_job(db, u1, "antifold", [("o.json", out, "table")])
+        r = tools.download_artifact(db, u2, {"job_id": job.id, "file_name": "o.json"})
+        assert r["ok"] is False and "job not found" in r["error"]
+
+
+def test_download_artifact_lists_options_when_the_name_is_wrong(tmp_path):
+    with SessionLocal() as db:
+        u = _user(db)
+        out = tmp_path / "o.json"; out.write_text("{}")
+        job = _finished_job(db, u, "antifold", [("o.json", out, "table")])
+        r = tools.download_artifact(db, u, {"job_id": job.id, "file_name": "nope.json"})
+        assert r["ok"] is False and "o.json" in r["error"]

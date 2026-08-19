@@ -48,7 +48,9 @@ def test_submit_chained_files_from_source(monkeypatch, tmp_path):
         pdb = tmp_path / "backbone.pdb"; pdb.write_text("ATOM\n")
         src = _finished_job(db, u, "rfdiffusion", [("backbone.pdb", pdb, "structure")])
         captured = {}; _capture(monkeypatch, captured)
-        chaining_exec.submit_chained(db, u, pipeline="diffdock", params={}, from_job_id=src.id)
+        # DiffDock always needs a ligand; the chained structure is the receptor.
+        chaining_exec.submit_chained(db, u, pipeline="diffdock",
+                                     params={"ligand_smiles": "CCO"}, from_job_id=src.id)
         assert "backbone.pdb" in captured["input_files"]
 
 

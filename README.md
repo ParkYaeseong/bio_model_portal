@@ -241,7 +241,39 @@ MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
 ### 노출 툴
 - `list_models()` — 포탈 파이프라인 + 각 모델 입력 스키마(자기문서화)
 - `run_model(pipeline, parameters?, sequence?, files?)` — 모델 실행(기존 게이트웨이/Job 재사용), `job_id` 반환
+- `run_chain(steps, sequence?, files?)` — 여러 모델을 순서대로 실행(1단계 즉시, 이후 자동 연결)
 - `job_status(job_id)` / `job_result(job_id)` / `cancel_job(job_id)` — 모두 사용자 소유권 강제
+- `upload_file(name, text|base64|path, append?)` — 입력 파일을 서버 워크스페이스에 **한 번만** 올리고 `file_id` 획득
+- `list_files()` — 워크스페이스에 올려둔 파일 목록 + 절대 경로(`workspace_dir`)
+- `download_artifact(job_id, artifact_id|file_name, offset?, max_bytes?, save_to_workspace?)`
+  — 결과 파일 **내용**을 직접 읽기(텍스트/base64, 페이징). 후속 모델 입력으로 바로 재사용 가능
+
+### 파일 입력 규약 (`files[]`)
+
+`name`은 **파일 이름일 뿐 서버가 읽는 경로가 아닙니다.** 각 엔트리는 아래 네 가지 중
+하나로 **실제 내용**을 반드시 실어야 하며, 그렇지 않으면 제출 단계에서 즉시 거부됩니다
+(예전에는 조용히 버려져서 몇 분 뒤 게이트웨이 어댑터에서
+`no PDB content found in payload`로 실패했습니다):
+
+| 형태 | 용도 |
+|---|---|
+| `{"name": "ab.pdb", "text": "ATOM ..."}` | PDB/CIF/FASTA/SDF 같은 텍스트 포맷 (base64 인코딩 손상 위험 없음) |
+| `{"name": "ab.pdb", "base64": "..."}` | 바이너리/임의 파일 |
+| `{"file_id": "ab.pdb"}` | `upload_file`로 미리 올린 파일 (대용량은 `append=true`로 분할 업로드) |
+| `{"path": "ab.pdb"}` | 서버 워크스페이스(`list_files().workspace_dir`) 안의 파일 |
+
+`path`는 기본적으로 **호출자 본인의 워크스페이스 디렉터리**(`STORAGE_ROOT/workspace/<user_id>`)
+안으로만 제한됩니다. 포탈과 같은 호스트에서 도는 클라이언트에 다른 디렉터리를 열어주려면
+백엔드 `.env`에 `MCP_FILE_ROOTS=/경로1:/경로2`를 지정하세요(비워두면 워크스페이스 전용).
+
+### 제출 전 입력 검증
+
+UI 폼이 하던 필수 입력 검사를 MCP/챗봇 경로에도 적용합니다. 구조 입력 모델
+(AntiFold·ProteinMPNN·PPIformer·Rosetta Relax·DiffDock)은 `.pdb/.cif`가 없으면,
+서열 입력 모델(AF2·AF3·Boltz-2·ColabFold·ESMFold·BioEmu·MMseqs·ANARCII)은
+서열/FASTA/PDB가 없으면 제출 자체가 거부되고 무엇을 보내야 하는지 알려줍니다.
+select/number 파라미터는 카탈로그 값·최솟값을 검사하고, 필수 항목 중 권장 기본값이
+있는 항목(예: `num_designs`)은 자동으로 채운 뒤 `applied_defaults`로 알려줍니다.
 
 ### 보안
 - PAT는 SHA-256 **해시만 저장**(원문 미저장), 생성 시 1회 노출, 해지 가능.

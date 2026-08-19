@@ -6,7 +6,6 @@ resolution; raises ValueError (input problems) or chaining.ChainError.
 """
 from __future__ import annotations
 
-import base64
 import re
 import shutil
 import tempfile
@@ -15,10 +14,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from . import chaining, models
+from .mcp import files as mcp_files
+from .mcp import validation
 from .runpod import PIPELINES
 from .workflow import job_bridge
 
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB per file
 _ACTIVE_STATUSES = {"pending", "submitted", "running", "queued", "in_queue", "in_progress", "processing"}
 
 
@@ -36,9 +36,14 @@ def submit_chained(
     files: list[dict] | None = None,
     from_job_id: str | None = None,
     source_artifact_ids: list[str] | None = None,
+    applied_defaults: dict | None = None,
 ) -> models.Job:
     """Resolve any chained inputs and submit one job. Raises ValueError or
-    chaining.ChainError; callers format those for the LLM / mark the chain."""
+    chaining.ChainError; callers format those for the LLM / mark the chain.
+
+    `applied_defaults`, when given, is filled with any recommended default this
+    submission had to supply for a missing required parameter, so the caller can
+    report it back instead of silently choosing for the user."""
     pipeline = str(pipeline or "")
     if pipeline not in PIPELINES:
         raise ValueError(f"unknown pipeline '{pipeline}'. valid: {sorted(PIPELINES)}")
@@ -46,21 +51,9 @@ def submit_chained(
     input_files: list[Path] = []
     tmp: Path | None = None
     try:
-        for item in files or []:
-            b64 = item.get("base64")
-            if not b64:
-                continue
-            try:
-                data = base64.b64decode(b64)
-            except Exception as exc:
-                raise ValueError("a file's base64 content is invalid") from exc
-            if len(data) > _MAX_UPLOAD_BYTES:
-                raise ValueError(f"file exceeds {_MAX_UPLOAD_BYTES} bytes")
+        if files:
             tmp = tmp or Path(tempfile.mkdtemp(prefix="mcp_upload_"))
-            safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(item.get("name") or "input"))
-            dest = tmp / (safe or "input")
-            dest.write_bytes(data)
-            input_files.append(dest)
+            input_files.extend(mcp_files.stage_files(user, files, tmp))
 
         if from_job_id or source_artifact_ids:
             if not from_job_id:
@@ -82,15 +75,11 @@ def submit_chained(
                     dest.write_bytes(Path(artifact.file_path).read_bytes())
                     input_files.append(dest)
 
-        if pipeline == "rfdiffusion" and not (
-            input_files or params.get("length") or params.get("contigs") or params.get("contig")
-        ):
-            raise ValueError(
-                "RFdiffusion needs a design spec: set 'length' for de novo (recommended: 100), "
-                "or provide a PDB file with 'contigs' for motif scaffolding. A sequence is not a "
-                "valid RFdiffusion input. Ask the user for a length, or offer the recommended "
-                "default (length=100) and confirm before running."
-            )
+        # Every model's input contract, checked before submit: the gateway
+        # adapter enforces the same rules, but only after the job is queued.
+        applied = validation.validate_run(pipeline, params, sequence, input_files)
+        if applied_defaults is not None:
+            applied_defaults.update(applied)
 
         return job_bridge.create_step_job(
             db, user_id=user.id, title=f"mcp {pipeline}", pipeline=pipeline,

@@ -1,4 +1,4 @@
-﻿from functools import lru_cache
+from functools import lru_cache
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     alphafold3_endpoint_id: str | None = Field(default=None, env="ALPHAFOLD3_ENDPOINT_ID")
     antifold_endpoint_id: str | None = Field(default=None, env="ANTIFOLD_ENDPOINT_ID")
     boltz2_endpoint_id: str | None = Field(default=None, env="BOLTZ2_ENDPOINT_ID")
+    anarcii_endpoint_id: str | None = Field(default=None, env="ANARCII_ENDPOINT_ID")
+    ppiformer_endpoint_id: str | None = Field(default=None, env="PPIFORMER_ENDPOINT_ID")
 
     openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", env="OPENAI_MODEL")
@@ -52,6 +54,11 @@ class Settings(BaseSettings):
     # Comma-separated User.username values (e.g. "sso:<sub>,kbfportal") allowed to
     # activate/reject artifacts. Empty => nobody can promote (fail closed).
     selfimprove_admin_users: str = Field(default="", env="SELFIMPROVE_ADMIN_USERS")
+
+    # Extra server directories the MCP `files[].path` / upload_file(path=...)
+    # input may read from (os.pathsep/comma-separated). Empty by default: a PAT
+    # can then only reach that user's own workspace directory under storage_root.
+    mcp_file_roots: str = Field(default="", env="MCP_FILE_ROOTS")
 
     storage_root: Path = Field(default=Path("./data"), env="STORAGE_ROOT")
     uploads_dir: str = "uploads"
