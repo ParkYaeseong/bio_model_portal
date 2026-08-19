@@ -93,6 +93,14 @@ def compatible_targets(src_pipeline: str) -> list[str]:
             if dst != src_pipeline and compatible_role(src_pipeline, dst)]
 
 
+# ProteinMPNN and AntiFold write a multi-chain design as one FASTA record with
+# '/' between chains; every downstream folding model in the portal (ColabFold,
+# AlphaFold3, Boltz-2) uses ':'. Chaining an antibody design straight into AF3
+# used to hand the worker the raw '/' string, which AF3 rejects outright
+# ("Protein must contain only letters") after the job had already been queued.
+_CHAIN_SEPARATORS = "/|"
+
+
 def _first_fasta_sequence(text: str) -> str:
     seq: list[str] = []
     started = False
@@ -104,7 +112,12 @@ def _first_fasta_sequence(text: str) -> str:
             continue
         if started:
             seq.append(line.strip())
-    return "".join(seq)
+    joined = "".join(seq)
+    for separator in _CHAIN_SEPARATORS:
+        joined = joined.replace(separator, ":")
+    # A trailing separator (a chain break at the end of the record) would become
+    # an empty chain the folding models reject.
+    return joined.strip(":")
 
 
 def plan_chain(db, source_job, target_pipeline, source_artifact_ids=None) -> ChainPlan:

@@ -166,3 +166,16 @@ def test_phastest_parameters_are_validated(tmp_path):
 def test_esmfold2_requires_the_users_api_key():
     with pytest.raises(ValueError, match="api_key"):
         validate_run("esmfold2", {}, "ACDEFGHIKL", [])
+
+
+@pytest.mark.parametrize("pipeline", ["esmfold", "bioemu"])
+def test_single_chain_models_reject_a_complex(pipeline):
+    with pytest.raises(ValueError, match="single chain"):
+        validate_run(pipeline, {"api_key": "k"}, "ACDEFGHIKL:MNPQRSTVWY", [])
+    validate_run(pipeline, {"api_key": "k"}, "ACDEFGHIKL", [])
+
+
+def test_alphafold2_rejects_a_colon_joined_complex():
+    params = {"model_preset": "multimer", "db_preset": "full_dbs", "max_template_date": "2023-09-01"}
+    with pytest.raises(ValueError, match="single chain|at least two chains"):
+        validate_run("alphafold", params, "ACDEFGHIKL:MNPQRSTVWY", [])

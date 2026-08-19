@@ -2,6 +2,7 @@ from datetime import datetime
 
 from app import models
 from app.database import Base, engine, SessionLocal
+from app import job_control as JC
 from app.routers import jobs as J
 
 
@@ -26,7 +27,7 @@ def _job(db, user_id, status):
 def test_cancel_active_job_calls_client_and_marks_cancelled(monkeypatch):
     Base.metadata.create_all(bind=engine)
     _FakeClient.calls = []
-    monkeypatch.setattr(J, "RunpodClient", lambda: _FakeClient())
+    monkeypatch.setattr(JC, "RunpodClient", lambda: _FakeClient())
     with SessionLocal() as db:
         u = models.User(username="cancel_user1", password_hash="x"); db.add(u); db.commit()
         job = _job(db, u.id, "in_progress")
@@ -38,7 +39,7 @@ def test_cancel_active_job_calls_client_and_marks_cancelled(monkeypatch):
 def test_cancel_terminal_job_is_noop(monkeypatch):
     Base.metadata.create_all(bind=engine)
     _FakeClient.calls = []
-    monkeypatch.setattr(J, "RunpodClient", lambda: _FakeClient())
+    monkeypatch.setattr(JC, "RunpodClient", lambda: _FakeClient())
     with SessionLocal() as db:
         u = models.User(username="cancel_user2", password_hash="x"); db.add(u); db.commit()
         job = _job(db, u.id, "completed")
@@ -54,7 +55,7 @@ def test_cancel_survives_remote_failure(monkeypatch):
         def cancel(self, ep, jid):
             raise RuntimeError("gateway down")
 
-    monkeypatch.setattr(J, "RunpodClient", lambda: _Boom())
+    monkeypatch.setattr(JC, "RunpodClient", lambda: _Boom())
     with SessionLocal() as db:
         u = models.User(username="cancel_user3", password_hash="x"); db.add(u); db.commit()
         job = _job(db, u.id, "in_queue")
@@ -65,9 +66,28 @@ def test_cancel_survives_remote_failure(monkeypatch):
 
 def test_cancel_endpoint_returns_cancelled(monkeypatch):
     Base.metadata.create_all(bind=engine)
-    monkeypatch.setattr(J, "RunpodClient", lambda: _FakeClient())
+    monkeypatch.setattr(JC, "RunpodClient", lambda: _FakeClient())
     with SessionLocal() as db:
         u = models.User(username="cancel_user4", password_hash="x"); db.add(u); db.commit()
         job = _job(db, u.id, "in_progress")
         result = J.cancel_job(job_id=job.id, db=db, current_user=u)
         assert result.status == "cancelled"
+
+
+def test_mcp_cancel_stops_the_compute_too(monkeypatch):
+    """Cancelling over MCP has to free the GPU, not just flip the row —
+    otherwise a cancelled AlphaFold3 run keeps the card for another hour."""
+    import uuid
+
+    from app.mcp import tools
+
+    Base.metadata.create_all(bind=engine)
+    _FakeClient.calls = []
+    monkeypatch.setattr(JC, "RunpodClient", lambda: _FakeClient())
+    with SessionLocal() as db:
+        user = models.User(username=f"c_{uuid.uuid4().hex[:8]}", password_hash="x")
+        db.add(user); db.commit(); db.refresh(user)
+        job = _job(db, user.id, "in_progress")
+        out = tools.cancel_job(db, user, {"job_id": job.id})
+        assert out["ok"] is True and out["status"] == "cancelled"
+        assert _FakeClient.calls == [("ep1", "gw-1")]

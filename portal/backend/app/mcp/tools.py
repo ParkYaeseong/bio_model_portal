@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import chaining, chaining_exec, models
 from ..runpod import PIPELINES
 from ..chaining_exec import _ACTIVE_STATUSES, _owned_job
+from ..job_control import cancel_active_job
 from ..workflow import job_bridge  # noqa: F401 -- tests patch tools.job_bridge.create_step_job
 from . import files as mcp_files
 
@@ -127,8 +128,10 @@ def cancel_job(db: Session, user: models.User, arguments: dict) -> dict:
     job = _owned_job(db, user, arguments.get("job_id"))
     if not job:
         return {"ok": False, "error": "job not found"}
-    if (job.status or "").lower() in _ACTIVE_STATUSES:
-        job.status = "cancelled"
+    # Same path the UI's stop button takes: tell the gateway to stop the actual
+    # compute, then mark the row. Flipping only the row leaves an AlphaFold3 run
+    # holding the GPU for another hour.
+    if cancel_active_job(job):
         db.commit()
     return {"ok": True, "job_id": job.id, "status": job.status}
 
@@ -332,7 +335,7 @@ TOOLS = {
     }),
     "job_status": (job_status, "Get a job's status.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
     "job_result": (job_result, "Get a job's artifacts + metrics for explaining results.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
-    "cancel_job": (cancel_job, "Cancel a running job.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
+    "cancel_job": (cancel_job, "Cancel a running job and stop its compute on the GPU.", {"type": "object", "properties": {"job_id": {"type": "string"}}, "required": ["job_id"]}),
     "download_artifact": (download_artifact,
         "Read the CONTENT of one artifact from a finished job (job_result lists them). "
         "Text artifacts (result JSON/CSV, PDB/CIF, FASTA) come back as text, binary as "

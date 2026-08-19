@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import copy
@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from .. import models, queue_estimate
+from ..job_control import cancel_active_job as _cancel_active_job
 from ..auth import get_current_user
 from ..database import get_db
 from ..runpod import PIPELINES, RunpodClient, build_pipeline_payload, pipeline_endpoint
@@ -212,23 +213,6 @@ def download_archive(job_id: str, db: Session = Depends(get_db), current_user: m
     if not job.result_archive:
         raise HTTPException(status_code=404, detail="Results are not ready yet.")
     return FileResponse(job.result_archive, filename=Path(job.result_archive).name)
-
-
-def _cancel_active_job(job: models.Job) -> bool:
-    """Best-effort stop of a still-running job's actual compute (RunPod/worker
-    via the gateway) and mark it cancelled locally. Returns True if it was
-    active. Never raises — the local state is updated even if the remote call
-    fails, so the job leaves the active set either way."""
-    if (job.status or "").lower() not in queue_estimate.ACTIVE_STATUSES:
-        return False
-    if job.endpoint_id and job.runpod_job_id:
-        try:
-            RunpodClient().cancel(job.endpoint_id, job.runpod_job_id)
-        except Exception:  # noqa: BLE001 — best-effort; still cancel locally
-            pass
-    job.status = "cancelled"
-    job.error_message = "사용자가 정지함"
-    return True
 
 
 @router.post("/{job_id}/cancel", response_model=JobRead)

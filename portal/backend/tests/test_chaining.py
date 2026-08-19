@@ -119,3 +119,14 @@ def test_predicted_structures_can_feed_structure_consumers():
     assert chaining.compatible_role("boltz2", "antifold") == ("structure", "files")
     assert chaining.compatible_role("colabfold", "antifold") == ("structure", "files")
     assert "ppiformer" in chaining.compatible_targets("colabfold")
+
+
+def test_multi_chain_design_is_converted_to_the_folding_convention():
+    # ProteinMPNN/AntiFold separate chains with '/'; ColabFold/AF3/Boltz-2 want
+    # ':' and AF3 rejects the raw '/' string outright.
+    text = ">T=0.2, sample=1\nEVQLVESG/DIQMTQSP\n"
+    assert chaining._first_fasta_sequence(text) == "EVQLVESG:DIQMTQSP"
+
+
+def test_a_trailing_chain_break_does_not_become_an_empty_chain():
+    assert chaining._first_fasta_sequence(">d\nACDEFG/\n") == "ACDEFG"

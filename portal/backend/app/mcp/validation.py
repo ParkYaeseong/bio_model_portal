@@ -44,6 +44,16 @@ _SEQUENCE_INPUT = {
 # always a mis-pasted input.
 _SEQUENCE_ALPHABET = set("ACDEFGHIKLMNPQRSTVWYXBZJUO*-:/ \t\r\n")
 
+# Models that fold exactly one chain. ESMFold's tokenizer crashes on a
+# ':'-joined complex, and AlphaFold2 takes its chains as separate FASTA records,
+# not as one joined string -- so a complex has to be routed elsewhere.
+_MONOMER_ONLY = {
+    "esmfold": "ColabFold, AlphaFold3 or Boltz-2",
+    "esmfold2": "ColabFold, AlphaFold3 or Boltz-2",
+    "bioemu": "ColabFold, AlphaFold3 or Boltz-2",
+    "alphafold": "a FASTA with one '>header' record per chain (model_preset='multimer')",
+}
+
 # AntiFold region tokens, mirroring gateway/prep/antifold.py.
 _ANTIFOLD_REGIONS = {
     "all", "allH", "allL", "FWH", "FWL", "CDRH", "CDRL",
@@ -173,6 +183,12 @@ def _check_sequence_input(key, pipeline_def, params: dict, sequence, input_files
     usable = _with_suffix(input_files, STRUCTURE_SUFFIXES | FASTA_SUFFIXES)
     if not _blank(sequence):
         _check_sequence_text(pipeline_def.label, str(sequence))
+        if key in _MONOMER_ONLY and any(c in str(sequence) for c in ":/"):
+            raise ValueError(
+                f"{pipeline_def.label} folds a single chain, but the sequence has a "
+                f"chain break (':' or '/'). Use {_MONOMER_ONLY[key]} for a complex, "
+                f"or pass just one chain."
+            )
         return
     if usable:
         return
