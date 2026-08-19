@@ -10,6 +10,14 @@ const FALLBACK_MCP_URL = "https://biomodel.k-biofoundrycopilot.duckdns.org/mcp";
 const mcpEndpointUrl = () =>
   typeof window !== "undefined" ? `${window.location.origin}/mcp` : FALLBACK_MCP_URL;
 
+const buildUploadSnippet = (rawToken: string) =>
+  `curl -H "Authorization: Bearer ${rawToken || "<YOUR_TOKEN>"}" \\
+     -F "files=@her2.pdb" \\
+     ${mcpEndpointUrl()}/files
+
+# -> {"ok":true,"files":[{"file_id":"her2.pdb","size_bytes":226966,"sha256":"0ca3..."}]}
+# 이후 도구 호출에서는 id만: run_model(pipeline="antifold", files=[{"file_id":"her2.pdb"}])`;
+
 const buildConfigSnippet = (rawToken: string) =>
   JSON.stringify(
     {
@@ -218,9 +226,8 @@ export default function McpSettingsPage() {
                 <tr>
                   <td className="py-2 pr-4 font-mono text-xs">{`{"file_id":"ab.pdb"}`}</td>
                   <td className="py-2">
-                    원격 클라이언트용. <span className="font-mono">upload_file</span>로 한 번 올리고 재사용,
-                    큰 파일은 <span className="font-mono">append: true</span>로 나눠 올린 뒤 반환된{" "}
-                    <span className="font-mono">sha256</span>로 무결성 확인.
+                    <strong>각자 PC에서 도는 에이전트는 이것.</strong> 아래 HTTP 업로드로 한 번 올리고
+                    돌려받은 id만 참조합니다.
                   </td>
                 </tr>
                 <tr>
@@ -246,6 +253,29 @@ export default function McpSettingsPage() {
             를 쓰고, 복합체는 체인을 <span className="font-mono">:</span>로 이어 붙입니다. 필수 입력이 빠지면
             제출 전에 무엇이 필요한지 알려주는 에러가 돌아옵니다.
           </p>
+        </div>
+
+        {/* Members run the agent on their own laptop, so `path` is unreachable
+            and a tool-call base64 of a 227 KB PDB costs ~75k tokens. This is
+            the channel that makes a large input cost nothing: same PAT, plain
+            HTTP, the bytes never touch the model's context. */}
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-slate-900">큰 파일 업로드 (내 PC에서)</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            에이전트를 각자 PC에서 돌리면 서버 경로를 쓸 수 없습니다. 이럴 때는 도구 호출로 파일을
+            인코딩하지 말고, 같은 토큰으로 인증되는 HTTP 업로드를 한 번 쓰세요. 파일이 모델 컨텍스트를
+            거치지 않아 토큰 비용이 <strong>0</strong>입니다.
+          </p>
+          <pre className="mt-3 overflow-x-auto rounded-xl bg-slate-900 p-4 font-mono text-xs text-slate-100">
+            {buildUploadSnippet(rawToken ?? "")}
+          </pre>
+          <ul className="mt-3 space-y-1 text-xs text-slate-500">
+            <li>· 여러 개: <span className="font-mono">-F &quot;files=@a.pdb&quot; -F &quot;files=@b.sdf&quot;</span></li>
+            <li>· multipart를 못 쓰면: <span className="font-mono">curl --data-binary @her2.pdb &apos;.../mcp/files?name=her2.pdb&apos;</span></li>
+            <li>· 끊긴 업로드 이어붙이기: <span className="font-mono">?name=her2.pdb&amp;append=true</span></li>
+            <li>· 올려둔 목록: <span className="font-mono">curl -H &quot;Authorization: Bearer …&quot; .../mcp/files</span> (GET)</li>
+            <li>· 파일당 50MB 상한, 반환된 <span className="font-mono">sha256</span>로 무결성 확인, 저장 위치는 본인 워크스페이스뿐</li>
+          </ul>
         </div>
 
         {/* Runcell Science runs on each member's own machine: it drives the

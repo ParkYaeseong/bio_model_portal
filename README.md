@@ -243,7 +243,7 @@ MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
 - `run_model(pipeline, parameters?, sequence?, files?)` — 모델 실행(기존 게이트웨이/Job 재사용), `job_id` 반환
 - `run_chain(steps, sequence?, files?)` — 여러 모델을 순서대로 실행(1단계 즉시, 이후 자동 연결)
 - `job_status(job_id)` / `job_result(job_id)` / `cancel_job(job_id)` — 모두 사용자 소유권 강제
-- `upload_file(name, text|base64|path, append?)` — 입력 파일을 서버 워크스페이스에 **한 번만** 올리고 `file_id` 획득
+- `upload_file(name, text|base64|path, append?)` — 입력 파일을 서버 워크스페이스에 **한 번만** 올리고 `file_id` 획득 (대용량은 위 `POST /mcp/files` HTTP 업로드가 더 쌉니다)
 - `list_files()` — 워크스페이스에 올려둔 파일 목록 + 절대 경로(`workspace_dir`)
 - `download_artifact(job_id, artifact_id|file_name, offset?, max_bytes?, save_to_workspace?)`
   — 결과 파일 **내용**을 직접 읽기(텍스트/base64, 페이징). 후속 모델 입력으로 바로 재사용 가능
@@ -259,12 +259,37 @@ MVP는 이들 없이 오케스트레이션·추적을 먼저 견고화합니다.
 |---|---|
 | `{"path": "ab.pdb"}` | **포털 호스트에서 도는 클라이언트는 이걸 쓰세요.** `list_files().workspace_dir`로 `cp` 한 뒤 파일명만 넘기면 됨 — 인코딩도 토큰 비용도 0 |
 | `{"name": "ab.pdb", "text": "ATOM ..."}` | ~50KB 이하 텍스트 포맷(PDB/CIF/FASTA/SDF) |
-| `{"file_id": "ab.pdb"}` | `upload_file`로 미리 올린 파일 (원격 클라이언트용, 대용량은 `append=true` 분할) |
+| `{"file_id": "ab.pdb"}` | **원격 클라이언트(각자 PC의 에이전트)는 이걸 쓰세요.** 아래 HTTP 업로드로 한 번 올리고 id만 참조 |
 | `{"name": "ab.pdb", "base64": "..."}` | 바이너리 소용량 |
 
 ⚠️ **대용량 구조를 base64로 인라인하지 마세요.** 227KB PDB = base64 303KB ≈ 75k 토큰이고,
 청크로 쪼개도 총 비용은 동일합니다. 툴 설명·에러 메시지가 이 순서대로 유도하며, 큰 인라인
 업로드에는 `upload_file`이 실제 워크스페이스 경로가 담긴 `tip`을 함께 반환합니다.
+
+### HTTP 파일 업로드 (`POST /mcp/files`) — 원격 클라이언트용
+
+MCP 클라이언트는 보통 **각자 PC**에서 돌기 때문에 서버 경로(`path`)를 쓸 수 없습니다. 이때는
+JSON-RPC가 아니라 같은 PAT로 인증되는 일반 HTTP 업로드를 쓰세요. 모델 컨텍스트를 전혀 거치지
+않으므로 토큰 비용이 0입니다 (227KB PDB 기준 실측 50ms):
+
+```bash
+curl -H "Authorization: Bearer $KBF_PAT" \
+     -F "files=@her2.pdb" \
+     https://biomodel.k-biofoundrycopilot.duckdns.org/mcp/files
+# -> {"ok":true,"files":[{"file_id":"her2.pdb","size_bytes":226966,"sha256":"0ca3..."}]}
+
+# 이후 MCP 도구에서는 id만 참조
+#   run_model(pipeline="antifold", files=[{"file_id": "her2.pdb"}], ...)
+```
+
+- 여러 파일: `-F "files=@a.pdb" -F "files=@b.sdf"`
+- multipart를 못 쓰는 클라이언트: `curl --data-binary @her2.pdb '.../mcp/files?name=her2.pdb'`
+- 중단된 업로드 이어붙이기: `?name=her2.pdb&append=true`
+- 올려둔 목록 확인: `curl -H "Authorization: Bearer $KBF_PAT" .../mcp/files` (GET)
+- 파일당 50MB 상한, 반환된 `sha256`으로 무결성 확인. 저장 위치는 본인 워크스페이스뿐입니다.
+
+Caddy는 `/mcp`(POST/OPTIONS)와 `/mcp/files`를 SSO forward_auth에서 우회시켜 백엔드로 직접
+보냅니다 — 인증은 백엔드의 Bearer PAT 검사가 담당합니다(토큰 없으면 401).
 
 `path`는 기본적으로 **호출자 본인의 워크스페이스 디렉터리**(`STORAGE_ROOT/workspace/<user_id>`)
 안으로만 제한됩니다. 포탈과 같은 호스트에서 도는 클라이언트에 다른 디렉터리를 열어주려면

@@ -222,10 +222,12 @@ def upload_file(db: Session, user: models.User, arguments: dict) -> dict:
     if "path" not in sources and len(data) > _INLINE_HINT_BYTES:
         out["tip"] = (
             f"that was {len(data)} bytes sent inline (~{len(data) * 4 // 9000}k tokens as "
-            f"base64). If you can run shell on this server, stop encoding: "
-            f"`cp <file> {mcp_files.workspace_dir(user)}/` and pass "
-            f'files=[{{"path": "<file name>"}}] instead. Chunking with append=true does '
-            f"not reduce the total cost."
+            f"base64). Stop encoding: on this host, `cp <file> "
+            f"{mcp_files.workspace_dir(user)}/` and pass "
+            f'files=[{{"path": "<file name>"}}]; from anywhere else, `curl -H '
+            f"'Authorization: Bearer <your PAT>' -F 'files=@<file>' <this server>/mcp/files` "
+            f"and pass the returned file_id. Chunking with append=true does not reduce the "
+            f"total cost."
         )
     return out
 
@@ -265,10 +267,11 @@ _FILES_DESC = (
     "rejected, because the server cannot read a local path from it. Pick the "
     "cheapest form that applies, in this order: (1) if you can run shell "
     "commands on the portal's own host, copy the file into the workspace "
-    "directory that list_files reports and pass {'path': '<file name>'} — this "
-    "costs no tokens and no encoding; (2) for a SMALL text file (PDB/CIF/FASTA/"
-    "SDF under ~50 KB) pass {'text': '<file text>'}; (3) otherwise upload it "
-    "once with upload_file and pass {'file_id': ...}. Never base64 a large "
+    "directory that list_files reports and pass {'path': '<file name>'}; (2) "
+    "otherwise upload it once over plain HTTP — `curl -H 'Authorization: Bearer "
+    "<your PAT>' -F 'files=@<file>' <this server>/mcp/files` — and pass "
+    "{'file_id': '<returned file_id>'}; (3) for a SMALL text file (PDB/CIF/"
+    "FASTA/SDF under ~50 KB) pass {'text': '<file text>'}. Never base64 a large "
     "structure into this call: a 200 KB PDB is ~75k tokens of base64, and "
     "splitting it into chunks costs exactly the same."
 )
@@ -351,14 +354,16 @@ TOOLS = {
     }),
     "upload_file": (upload_file,
         "Stage an input file on the server ONCE and get a file_id back, then run models "
-        "with files=[{\"file_id\": \"...\"}]. CHECK FIRST whether you can run shell on the "
-        "portal's own host: if so, do NOT use this tool — `cp` the file into the directory "
-        "list_files reports and pass files=[{\"path\": \"<file name>\"}], which costs "
-        "nothing. Use this tool when your client is remote: text=<file text> for a text "
-        "format, base64=<bytes> otherwise, or path=<file already inside your workspace>. "
-        "Chunking (same name + append=true) makes a big upload survivable, NOT cheaper — "
-        "the token cost is the same total, so only base64 a file you genuinely cannot "
-        "reach any other way. The returned size_bytes/sha256 verify it arrived intact.", {
+        "with files=[{\"file_id\": \"...\"}]. PREFER A CHEAPER ROUTE FIRST: if you can run "
+        "shell on the portal's host, `cp` the file into the directory list_files reports "
+        "and pass files=[{\"path\": \"<file name>\"}]; if you can run shell anywhere else, "
+        "upload it with one HTTP request — `curl -H 'Authorization: Bearer <your PAT>' -F "
+        "'files=@<file>' <this server>/mcp/files` — which sends no bytes through your "
+        "context at all. Use THIS tool only when you can do neither: text=<file text> for "
+        "a text format, base64=<bytes> otherwise. Chunking (same name + append=true) makes "
+        "a big upload survivable, NOT cheaper — the total token cost is identical, so only "
+        "base64 a file you genuinely cannot reach any other way. The returned "
+        "size_bytes/sha256 verify it arrived intact.", {
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "file name to store, e.g. 'ab.pdb'"},
@@ -373,6 +378,8 @@ TOOLS = {
         "List the files you have staged on the server (file_id, size, sha256) and report "
         "your absolute workspace directory. CALL THIS FIRST when you need to feed a local "
         "file to a model: if you can run shell on the portal's host, `cp` the file into "
-        "workspace_dir and pass files=[{\"path\": \"<name>\"}] instead of encoding it.",
+        "workspace_dir and pass files=[{\"path\": \"<name>\"}] instead of encoding it; from "
+        "anywhere else upload with `curl -H 'Authorization: Bearer <PAT>' -F 'files=@<file>' "
+        "<this server>/mcp/files` (same list is available as GET /mcp/files).",
         {"type": "object", "properties": {}}),
 }

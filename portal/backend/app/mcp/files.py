@@ -217,13 +217,55 @@ def save_workspace_file(user, name: str, data: bytes, *, append: bool = False) -
 
 
 def describe(path: Path) -> dict:
-    raw = path.read_bytes()
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
     return {
         "file_id": path.name,
         "name": path.name,
-        "size_bytes": len(raw),
-        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": size,
+        "sha256": digest.hexdigest(),
     }
+
+
+async def write_workspace_stream(user, name: str, chunks, *, append: bool = False) -> dict:
+    """Stream an upload into the caller's workspace without holding it in memory.
+
+    `chunks` is any async iterable of bytes (a multipart UploadFile read loop or
+    the raw request stream). Used by the HTTP upload endpoint, which exists so a
+    client on a laptop can send a large structure in one request instead of
+    base64-ing it through the model's context.
+    """
+    dest = workspace_dir(user) / safe_name(name)
+    resuming = append and dest.exists()
+    total = dest.stat().st_size if resuming else 0
+    written = 0
+    try:
+        with dest.open("ab" if resuming else "wb") as handle:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                total += len(chunk)
+                written += len(chunk)
+                if total > MAX_FILE_BYTES:
+                    raise ValueError(
+                        f"file exceeds the {MAX_FILE_BYTES}-byte limit."
+                    )
+                handle.write(chunk)
+    except Exception:
+        # A partial write is worse than no write: it would be silently fed to a
+        # model as a truncated structure.
+        if not resuming:
+            dest.unlink(missing_ok=True)
+        raise
+    if not written:
+        if not resuming:
+            dest.unlink(missing_ok=True)
+        raise ValueError("no file content was received.")
+    return describe(dest)
 
 
 def list_workspace_files(user) -> list[dict]:
