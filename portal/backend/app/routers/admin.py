@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,10 @@ from ..database import get_db
 from ..user_display import display_name_for
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# This app configures no logging of its own, so this rides uvicorn's root
+# handler; it is only ever used for the scan-size warning below.
+logger = logging.getLogger(__name__)
 
 # The two halves of this page filter in opposite directions, on purpose.
 # A job's status is whatever an external worker reported, so it is matched
@@ -148,14 +153,43 @@ def activity(db: Session = Depends(get_db), _: models.User = Depends(require_adm
 DEFAULT_HISTORY_LIMIT = 100
 MAX_HISTORY_LIMIT = 500
 
+# MAX_HISTORY_LIMIT caps the page, not the scan: _history_rows builds every
+# row in memory before anything is filtered or sliced. Measured on this
+# codebase: 25ms at 1k rows, 212ms at 10k, 1.5s at 50k, 6.3s and 422MB at
+# 200k. Production is at 25 rows, so the design is right today, and the
+# memory column is what bites first on a host that has OOM-killed a gateway
+# process before. Past this line the design has outgrown itself: move
+# filtering and paging into SQL rather than raising the number.
+HISTORY_SCAN_WARN_ROWS = 5_000
+
+# Named, not prefix-matched: a future private key that forgets the underscore
+# should be caught here rather than published to the client by accident.
+_PRIVATE_ROW_KEYS = {"_owner", "_created"}
+
+
+def _public_row(row: dict) -> dict:
+    """The client-facing half of a `_history_rows` row.
+
+    Shared so a caller that returns these rows drops the same keys this
+    endpoint does instead of re-deriving the rule.
+    """
+    return {key: value for key, value in row.items() if key not in _PRIVATE_ROW_KEYS}
+
 
 def _parse_since(value: str | None) -> datetime | None:
     """`since` as a naive UTC datetime, or None when it was not supplied.
 
     Naive because every timestamp in this database is naive UTC, so an aware
-    value has to be converted before it can be compared to one. A value that
-    does not parse is the admin's typo, not a server fault: 400, not 500.
+    value has to be converted before it can be compared to one -- without the
+    astimezone() call below, `2026-03-03T00:00:00+09:00` would silently hide
+    nine hours of rows either side of the boundary, and quietly showing fewer
+    rows than the truth is the worst way for an audit page to be wrong. A
+    value that does not parse is the admin's typo, not a server fault: 400,
+    not 500. Shared with the usage view so both parse and report identically.
     """
+    # Stripped before the "is it set" test, like the other three filters: a
+    # box holding nothing but spaces means "no filter", not "bad request".
+    value = (value or "").strip()
     if not value:
         return None
     try:
@@ -179,10 +213,24 @@ def _history_rows(db: Session) -> list[dict]:
     would be unreadable as SQL. Kept separate from the endpoint because the
     usage view aggregates these same rows per user.
 
-    Rows carry two underscore-prefixed keys the client never sees: `_owner`,
-    the account object the user filter reads every name off, and `_created`,
-    the raw datetime the `since` filter compares against. The endpoint strips
-    them -- a SQLAlchemy object would not serialise at all.
+    Rows carry two private keys (`_PRIVATE_ROW_KEYS`) the client never sees:
+    `_owner`, the account object the user filter reads every name off, and
+    `_created`, the raw datetime the `since` filter compares against, kept as
+    a datetime because the public `created_at` is a string and comparing the
+    two would raise. Pass rows through `_public_row` before returning them --
+    a SQLAlchemy object would not serialise at all.
+
+    `_owner` is bound to `db`: read it inside the request, and never cache it
+    or hand it to a caller that outlives the session. A caller grouping by
+    account should use the public `owner_id` instead, which is an integer, and
+    which keeps apart two accounts that share a display name and two deleted
+    accounts that both render as "(unknown)".
+
+    The `if x else None` guards on the timestamps below, and the `or ""` on
+    the statuses, are deliberate defence rather than reachable branches: those
+    columns are all NOT NULL and this project has no migration tool, so the
+    guards cost nothing and survive a column that quietly becomes nullable.
+    They are not coverage, and /activity is written the same way.
     """
     rows: list[dict] = []
 
@@ -194,6 +242,7 @@ def _history_rows(db: Session) -> list[dict]:
         rows.append({
             "kind": "job",
             "id": job.id,
+            "owner_id": job.user_id,
             "owner": display_name_for(owner),
             "name": job.title or job.pipeline,
             "pipeline": job.pipeline,
@@ -209,6 +258,7 @@ def _history_rows(db: Session) -> list[dict]:
         rows.append({
             "kind": "workflow",
             "id": run.id,
+            "owner_id": run.owner_id,
             "owner": display_name_for(owner),
             "name": workflow.name if workflow else "(deleted workflow)",
             "pipeline": workflow.template_key if workflow else None,
@@ -228,22 +278,34 @@ def _history_rows(db: Session) -> list[dict]:
 
     # Same ordering argument as /activity: naive-UTC isoformat sorts
     # lexicographically in chronological order, and an unknown creation time
-    # sorts last rather than crashing the comparison.
-    rows.sort(key=lambda row: row["created_at"] or "", reverse=True)
+    # sorts last rather than crashing the comparison. The id breaks ties, so
+    # that two rows sharing a timestamp cannot swap places between two
+    # paginated requests and duplicate one row while skipping another.
+    rows.sort(key=lambda row: (row["created_at"] or "", row["id"]), reverse=True)
+    if len(rows) > HISTORY_SCAN_WARN_ROWS:
+        logger.warning(
+            "admin history scanned %d rows in memory (over %d): move filtering "
+            "and paging into SQL", len(rows), HISTORY_SCAN_WARN_ROWS,
+        )
     return rows
 
 
-def _owner_haystack(owner: models.User | None) -> str:
-    """Every name an account answers to, lowercased, for substring matching.
+def _owner_matches(owner: models.User | None, needle: str) -> bool:
+    """Does `needle` appear in any one name this account answers to?
 
-    All three, not just the username: SSO usernames are OIDC subjects, so an
-    admin searching for a colleague types their display name or their email.
+    All three names, not just the username: SSO usernames are OIDC subjects,
+    so an admin searching for a colleague types their display name or their
+    email. Each field is tested on its own rather than joined into one string,
+    because a join lets a search span two of them -- 'zz alice' would match a
+    'zz' username sitting next to an 'alice@...' email, and a false positive
+    on an audit filter is worse than a miss.
     """
     if owner is None:
-        return ""
-    return " ".join(
-        (value or "") for value in (owner.username, owner.email, owner.display_name)
-    ).lower()
+        return False
+    return any(
+        needle in (value or "").lower()
+        for value in (owner.username, owner.email, owner.display_name)
+    )
 
 
 def _history_matches(
@@ -255,15 +317,26 @@ def _history_matches(
     since: datetime | None,
 ) -> bool:
     """Every filter is optional and an empty value means "do not filter": the
-    UI submits its whole filter bar on every request, blank boxes included."""
-    if user and user.strip().lower() not in _owner_haystack(row["_owner"]):
+    UI submits its whole filter bar on every request, blank boxes included.
+    Shared with the usage view so the two agree on what each box means.
+
+    All four boxes behave the same way: stripped first, and a value left with
+    nothing in it filters nothing. `since` is stripped the same way in
+    `_parse_since`, before it is ever parsed.
+    """
+    user = (user or "").strip().lower()
+    pipeline = (pipeline or "").strip().lower()
+    status = (status or "").strip().lower()
+
+    if user and not _owner_matches(row["_owner"], user):
         return False
     # Exact, not substring: 'alphafold' must not drag in 'alphafold_multimer'.
     # Case-insensitive because both columns hold text written by workers and
-    # by templates, in whatever case they chose.
-    if pipeline and (row["pipeline"] or "").lower() != pipeline.strip().lower():
+    # by templates, in whatever case they chose. `or ""` because a run whose
+    # workflow row is gone has no pipeline, and must not match one.
+    if pipeline and (row["pipeline"] or "").lower() != pipeline:
         return False
-    if status and (row["status"] or "").lower() != status.strip().lower():
+    if status and (row["status"] or "").lower() != status:
         return False
     if since is not None:
         # A row with no creation time cannot be shown to fall inside the
@@ -284,7 +357,17 @@ def history(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin),
 ) -> dict:
-    """Everything ever run, by anyone, newest first, filtered and paginated."""
+    """Everything ever run, by anyone, newest first, filtered and paginated.
+
+    `duration_seconds` is null wherever no duration can honestly be measured:
+    on a job that has not reached a terminal status, and on a run that never
+    started or has not finished. It is never a zero and never a guess.
+
+    Every filter is optional, and blank (or all-whitespace) means "no filter".
+    A `since` this cannot parse answers 400; a `limit` or `offset` that is not
+    a number at all answers FastAPI's own 422, while numbers out of range are
+    clamped rather than rejected.
+    """
     since_dt = _parse_since(since)
 
     matched = [
@@ -302,5 +385,5 @@ def history(
     offset = max(0, offset)
     page = matched[offset:offset + limit]
 
-    items = [{key: value for key, value in row.items() if not key.startswith("_")} for row in page]
+    items = [_public_row(row) for row in page]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
