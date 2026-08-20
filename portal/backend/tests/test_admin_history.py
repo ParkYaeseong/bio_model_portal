@@ -566,17 +566,23 @@ def test_rows_sharing_a_timestamp_have_a_stable_order():
     # Jobs are created in bursts, so identical timestamps are ordinary. With
     # no tie-break the order is whatever the query happened to return, and two
     # paginated requests can duplicate one row while skipping another.
+    # Fixed ids, not the generated UUIDs: with random ids the expected order
+    # is whatever the generator produced, and about one run in 120 it happens
+    # to match insertion order, so the test keeps passing while no longer
+    # noticing that the tie-break is gone. Inserted ascending so a missing
+    # tie-break returns them the other way round.
     admin = make_user(is_admin=True)
     same_moment = datetime(2026, 1, 1, 9, 0)
     with SessionLocal() as db:
-        ids = [job_row(db, admin.id, "completed", title=f"j{i}", created_at=same_moment).id
-               for i in range(5)]
+        for n in range(1, 6):
+            job = job_row(db, admin.id, "completed", title=f"j{n}", created_at=same_moment)
+            _set(db, "jobs", job.id, id=f"tb-{n}")
 
     body = _history(admin)
     paged = [_history(admin, limit=1, offset=n)["items"][0]["id"] for n in range(5)]
 
-    assert [i["id"] for i in body["items"]] == sorted(ids, reverse=True)
-    assert paged == sorted(ids, reverse=True)
+    assert [i["id"] for i in body["items"]] == ["tb-5", "tb-4", "tb-3", "tb-2", "tb-1"]
+    assert paged == ["tb-5", "tb-4", "tb-3", "tb-2", "tb-1"]
 
 
 # --- rows nothing else would show ------------------------------------------
