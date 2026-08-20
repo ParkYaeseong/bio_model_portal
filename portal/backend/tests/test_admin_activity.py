@@ -52,7 +52,7 @@ def test_jobs_and_runs_are_interleaved_newest_first():
     admin = make_user(is_admin=True)
     other = make_user()
     with SessionLocal() as db:
-        # run_row pins its run to 2026-01-02, so the jobs straddle it.
+        # run_row starts its run at 2026-01-02 10:00, so the jobs straddle it.
         job_row(db, other.id, "running", title="newest", created_at=datetime(2026, 1, 3))
         job_row(db, other.id, "queued", title="oldest", created_at=datetime(2026, 1, 1))
         run_row(db, other.id, "running", name="middle")
@@ -80,3 +80,36 @@ def test_elapsed_survives_an_estimate_without_one(monkeypatch):
     items = client_as(admin).get("/api/admin/activity").json()["items"]
 
     assert items[0]["elapsed_seconds"] >= 250
+
+
+def test_a_queued_run_falls_back_to_when_it_was_created():
+    # started_at is only set once a run actually starts, so every queued run in
+    # production reaches this fallback. Without it a queued run would report a
+    # null start, show no elapsed time, and sink to the bottom of the list.
+    admin = make_user(is_admin=True)
+    other = make_user()
+    with SessionLocal() as db:
+        run_row(db, other.id, "queued", created_at=datetime(2026, 1, 2, 9, 0), started_at=None)
+
+    items = client_as(admin).get("/api/admin/activity").json()["items"]
+
+    assert items[0]["started_at"] == "2026-01-02T09:00:00"
+    assert items[0]["elapsed_seconds"] > 0
+
+
+def test_a_running_run_reports_when_it_started_not_when_it_was_queued():
+    admin = make_user(is_admin=True)
+    other = make_user()
+    with SessionLocal() as db:
+        run_row(
+            db, other.id, "running",
+            created_at=datetime(2026, 1, 2, 9, 0), started_at=datetime(2026, 1, 2, 10, 0),
+        )
+
+    items = client_as(admin).get("/api/admin/activity").json()["items"]
+
+    assert items[0]["started_at"] == "2026-01-02T10:00:00"
+    # A multi-step run sits in no single endpoint queue; the UI renders these
+    # two fields, so "no estimate" must stay null rather than become a zero.
+    assert items[0]["queue_position"] is None
+    assert items[0]["eta_seconds"] is None

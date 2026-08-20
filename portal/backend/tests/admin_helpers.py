@@ -10,6 +10,9 @@ from app.auth import get_current_user
 from app.database import SessionLocal
 from app.main import app
 
+# "argument not given", distinct from an explicitly-passed None.
+_UNSET = object()
+
 
 def make_user(is_admin=False, **kwargs):
     """A persisted account, detached so it can stand in for the SSO identity.
@@ -47,12 +50,21 @@ def job_row(db, user_id, status, title="t", endpoint_id="ep-1", created_at=None,
     return job
 
 
-def run_row(db, owner_id, status, name="wf"):
+def run_row(db, owner_id, status, name="wf", created_at=None, started_at=_UNSET):
+    """A workflow plus one run of it.
+
+    The two timestamps default an hour apart so a caller that reads the wrong
+    one gets a visibly wrong answer instead of a coincidence. `started_at` is
+    nullable in production -- the orchestrator only sets it when a run really
+    starts, so every queued run has it NULL -- and `_UNSET` is what lets a
+    caller pass `started_at=None` to model that.
+    """
     workflow = models.Workflow(name=name, owner_id=owner_id, template_key="rapid_v1")
     db.add(workflow); db.commit(); db.refresh(workflow)
     run = models.WorkflowRun(
         workflow_id=workflow.id, owner_id=owner_id, status=status,
-        created_at=datetime(2026, 1, 2), started_at=datetime(2026, 1, 2),
+        created_at=created_at or datetime(2026, 1, 2, 9, 0),
+        started_at=datetime(2026, 1, 2, 10, 0) if started_at is _UNSET else started_at,
     )
     db.add(run); db.commit(); db.refresh(run)
     return run
