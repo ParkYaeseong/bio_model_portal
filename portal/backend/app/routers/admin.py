@@ -444,9 +444,17 @@ def usage(
         entry["total"] += 1
         # Case-insensitive for the same reason /history's status filter is:
         # a job's status is whatever text a worker sent. Anything that is not
-        # one of the three finished states counts as still going, so a status
-        # nobody anticipated inflates "active" rather than vanishing from the
-        # totals -- the same bias as /activity's denylist.
+        # one of the three finished states counts as still going, so the four
+        # buckets always sum to `total`.
+        #
+        # This parts company with /activity, which does NOT treat the two
+        # halves alike: runs are filtered by a denylist there, but jobs go
+        # through queue_estimate.ACTIVE_STATUSES, an allowlist, so a job in a
+        # state nobody anticipated is dropped from that page entirely. The
+        # same job is counted here. The two tabs can therefore disagree about
+        # whether anything is running, and this endpoint takes the safer half
+        # of that disagreement: a row missing from a total is worse than a row
+        # in the vaguest bucket. Reconciling them means changing /activity.
         status = (row["status"] or "").lower()
         entry[status if status in TERMINAL_STATUSES else "active"] += 1
 
@@ -463,13 +471,14 @@ def usage(
     for owner_id, moment in newest.items():
         entries[owner_id]["last_activity"] = moment.isoformat()
 
-    # Busiest account first, which is the question the page is asked. The
-    # tie-break is the label and then the id, so two accounts with equal
-    # totals hold their order between requests instead of following whichever
-    # of them happened to run something most recently; the id is stringified
-    # only so a null owner could not raise mid-sort.
+    # Busiest account first, which is the question the page is asked. Then the
+    # label, case-insensitively, and then the account id -- so two accounts
+    # with equal totals hold one order between requests instead of following
+    # whichever of them happened to run something most recently, and two
+    # namesakes are still separated by something. The id is compared as the
+    # integer it is: as text, account 10 would file ahead of account 9.
     users = sorted(
         entries.values(),
-        key=lambda entry: (-entry["total"], entry["owner"].lower(), str(entry["owner_id"])),
+        key=lambda entry: (-entry["total"], entry["owner"].lower(), entry["owner_id"]),
     )
     return {"users": users}

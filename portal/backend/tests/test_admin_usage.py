@@ -257,6 +257,37 @@ def test_last_activity_is_the_newest_row_not_the_oldest():
     assert _for(_usage(admin), ada.id)["last_activity"] == "2026-03-04T17:45:00"
 
 
+def test_last_activity_is_a_maximum_not_the_first_row_seen(monkeypatch):
+    # Every row this aggregates arrives newest-first today, so taking the
+    # first row of a group and taking the largest timestamp in it agree on
+    # every input the factories can build -- which means the comparison is
+    # untested by construction. _history_rows' own docstring plans to move
+    # sorting into SQL past 5,000 rows, and a reordering there would corrupt
+    # last_activity with nothing failing. Fed in oldest-first for that reason.
+    from app.routers import admin as admin_router
+
+    admin = make_user(is_admin=True)
+
+    def _row(job_id, created):
+        return {
+            "kind": "job", "id": job_id, "owner_id": 7, "owner": "Ghost",
+            "name": job_id, "pipeline": "alphafold", "status": "completed",
+            "created_at": created.isoformat(), "duration_seconds": None,
+            "error_message": None, "_owner": None, "_created": created,
+        }
+
+    oldest_first = [
+        _row("oldest", datetime(2026, 1, 1, 9, 0)),
+        _row("middle", datetime(2026, 2, 1, 9, 0)),
+        _row("newest", datetime(2026, 3, 4, 17, 45)),
+    ]
+    monkeypatch.setattr(admin_router, "_history_rows", lambda db: oldest_first)
+
+    entry = _for(_usage(admin), 7)
+
+    assert entry["last_activity"] == "2026-03-04T17:45:00"
+
+
 def test_last_activity_is_per_account_not_fleet_wide():
     admin = make_user(is_admin=True)
     ada = make_user(display_name="Ada")
@@ -402,18 +433,20 @@ def test_the_tie_break_reads_names_the_way_a_reader_does():
 
 
 def test_equal_totals_under_one_name_break_on_the_account_id():
-    # Same label, same total: only the id can separate them, and it has to,
-    # or the two rows trade places between requests. The newer row belongs to
-    # the later id, so a missing id tie-break reverses this list.
+    # Same label, same total: only the id can separate them, and it has to, or
+    # the two rows trade places between requests. Ids 9 and 10 specifically,
+    # rather than whichever two the sequence hands out: they are the smallest
+    # pair that orders one way as numbers and the other way as text, so this
+    # also fails if the id is compared as a string. The newer row belongs to
+    # the later id, so dropping the id tie-break reverses the list too.
     admin = make_user(is_admin=True)
-    first = make_user(display_name="Chris Green")
-    second = make_user(display_name="Chris Green")
-    assert str(first.id) < str(second.id), "test assumes ascending, string-ordered ids"
+    first = make_user(id=9, display_name="Chris Green")
+    second = make_user(id=10, display_name="Chris Green")
     with SessionLocal() as db:
         job_row(db, first.id, "completed", title="a", created_at=datetime(2026, 1, 1))
         job_row(db, second.id, "completed", title="b", created_at=datetime(2026, 2, 1))
 
-    assert [entry["owner_id"] for entry in _usage(admin)] == [first.id, second.id]
+    assert [entry["owner_id"] for entry in _usage(admin)] == [9, 10]
 
 
 def test_the_busiest_account_is_first_even_when_it_last_ran_long_ago():
