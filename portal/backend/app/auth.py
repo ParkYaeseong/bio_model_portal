@@ -75,13 +75,16 @@ def provision_sso_user(
     # An absent header must never wipe what we already know.
     changed = False
     for attribute, raw in (("email", email), ("display_name", name)):
-        value = unquote(str(raw)).strip() if raw else ""
+        # isinstance, not truthiness: callers that invoke get_current_user
+        # directly (the identity tests) bypass FastAPI's dependency injection,
+        # so an omitted header arrives as a Header(...) sentinel rather than
+        # None. Same reason is_admin below tests isinstance(x_kbf_admin, str).
+        value = unquote(raw).strip() if isinstance(raw, str) else ""
         if value and getattr(user, attribute) != value:
             setattr(user, attribute, value)
             changed = True
     if changed:
         db.commit()
-        db.refresh(user)
     return user
 
 

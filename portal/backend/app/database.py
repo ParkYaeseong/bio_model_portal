@@ -1,4 +1,4 @@
-﻿from sqlalchemy import create_engine
+﻿from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from .config import get_settings
@@ -20,15 +20,14 @@ def get_db():
         db.close()
 
 
-def ensure_added_columns() -> None:
-    """Add columns introduced after a database was first created.
+def ensure_user_identity_columns() -> None:
+    """Add the identity columns (email, display_name) that ``users`` gained
+    after the database was first created.
 
     There is no migration tool in this project: main.py calls
     Base.metadata.create_all, which creates missing TABLES but never missing
     COLUMNS. Running this twice is a no-op.
     """
-    from sqlalchemy import inspect, text
-
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
         return
@@ -37,8 +36,8 @@ def ensure_added_columns() -> None:
         ("email", "ALTER TABLE users ADD COLUMN email VARCHAR(255)"),
         ("display_name", "ALTER TABLE users ADD COLUMN display_name VARCHAR(255)"),
     )
-    with engine.begin() as conn:
-        for column, ddl in additions:
-            if column not in existing:
+    missing = [(column, ddl) for column, ddl in additions if column not in existing]
+    if missing:
+        with engine.begin() as conn:
+            for _column, ddl in missing:
                 conn.execute(text(ddl))
-

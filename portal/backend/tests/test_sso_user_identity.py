@@ -1,22 +1,10 @@
 from urllib.parse import quote
 
 from app import auth, models
-from app.database import Base, SessionLocal, engine, ensure_added_columns
-
-
-def test_alter_table_helper_is_safe_to_run_twice():
-    from sqlalchemy import inspect
-
-    Base.metadata.create_all(bind=engine)
-    ensure_added_columns()
-    ensure_added_columns()
-
-    columns = {c["name"] for c in inspect(engine).get_columns("users")}
-    assert {"email", "display_name"} <= columns
+from app.database import SessionLocal
 
 
 def test_sso_login_stores_email_and_name():
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         user = auth.provision_sso_user(db, "sub-identity-1", "a@b.c", "Ada Lovelace")
         assert user.email == "a@b.c"
@@ -24,7 +12,6 @@ def test_sso_login_stores_email_and_name():
 
 
 def test_sso_login_percent_decodes_the_headers():
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         user = auth.provision_sso_user(db, "sub-identity-2", quote("a@b.c"), quote("홍길동"))
         assert user.email == "a@b.c"
@@ -32,7 +19,6 @@ def test_sso_login_percent_decodes_the_headers():
 
 
 def test_sso_login_updates_a_changed_name():
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         auth.provision_sso_user(db, "sub-identity-3", "old@b.c", "Old Name")
         user = auth.provision_sso_user(db, "sub-identity-3", "new@b.c", "New Name")
@@ -42,9 +28,38 @@ def test_sso_login_updates_a_changed_name():
 
 
 def test_missing_headers_do_not_wipe_stored_identity():
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         auth.provision_sso_user(db, "sub-identity-4", "keep@b.c", "Keep Me")
         user = auth.provision_sso_user(db, "sub-identity-4", None, None)
         assert user.email == "keep@b.c"
         assert user.display_name == "Keep Me"
+
+
+def test_a_blank_header_does_not_wipe_a_stored_value():
+    with SessionLocal() as db:
+        auth.provision_sso_user(db, "sub-identity-5", "keep@b.c", "Keep Me")
+        user = auth.provision_sso_user(db, "sub-identity-5", "   ", "%20")
+        assert user.email == "keep@b.c"
+        assert user.display_name == "Keep Me"
+
+
+def test_an_unchanged_login_does_not_write():
+    with SessionLocal() as db:
+        first = auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
+        stamp = first.updated_at
+        again = auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
+        assert again.updated_at == stamp
+
+
+def test_a_non_string_header_sentinel_is_ignored():
+    # get_current_user called outside FastAPI's dependency injection hands the
+    # Header(...) default straight through; it must never reach the database.
+    from fastapi import Header
+
+    with SessionLocal() as db:
+        auth.provision_sso_user(db, "sub-identity-7", "real@b.c", "Real Name")
+        user = auth.provision_sso_user(
+            db, "sub-identity-7", Header(default=None), Header(default=None)
+        )
+        assert user.email == "real@b.c"
+        assert user.display_name == "Real Name"

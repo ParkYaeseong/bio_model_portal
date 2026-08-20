@@ -11,13 +11,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 _TMP = tempfile.mkdtemp(prefix="wf_test_")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP}/test.db")
 os.environ.setdefault("STORAGE_ROOT", _TMP)
-# These two must also be set before any test module imports app.* (app/config.py
-# caches get_settings() with @lru_cache, so whoever imports first wins). Setting
-# them here rather than in a test module makes the header-identity code path
-# testable regardless of which test file pytest collects first. Production
-# leaves KBF_ALLOW_INSECURE_SSO_HEADER false and fails closed.
-os.environ.setdefault("KBF_FORWARD_AUTH_SECRET", "")
-os.environ.setdefault("KBF_ALLOW_INSECURE_SSO_HEADER", "true")
+# These two must be set before any test module imports app.* (app/config.py
+# caches get_settings() with @lru_cache, so whoever imports first wins) and
+# must NOT honour an inherited value: a developer who has sourced the deployed
+# .env would otherwise get these test-only security opt-ins from the shell
+# instead of from the test suite. Plain assignment, not setdefault, on purpose.
+# See the comment on KBF_ALLOW_INSECURE_SSO_HEADER below for what this means
+# for the rest of the suite. Production leaves KBF_ALLOW_INSECURE_SSO_HEADER
+# false and fails closed.
+os.environ["KBF_FORWARD_AUTH_SECRET"] = ""
+# Every test in this suite trusts the X-KBF-User header as if it came from the
+# gateway. Tests that need to exercise fail-closed behaviour must patch
+# auth.settings directly (see test_auth_identity.py) rather than change this
+# environment variable, which no test module can do anyway (see above).
+os.environ["KBF_ALLOW_INSECURE_SSO_HEADER"] = "true"
 
 import pytest
 
@@ -28,6 +35,13 @@ def _isolate_db():
     SQLite file, so without this a test that leaves rows behind (e.g. a run in
     'running' state) pollutes tests that query globally."""
     from app.database import Base, engine
+
+    # This fixture empties every table before every test, so refuse to run
+    # unless the engine really is pointing at this session's throwaway file.
+    url = str(engine.url)
+    assert url.startswith("sqlite:") and _TMP in url, (
+        f"refusing to truncate tables in a non-throwaway database: {url}"
+    )
 
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:

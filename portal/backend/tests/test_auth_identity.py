@@ -16,7 +16,6 @@ Base.metadata.create_all(bind=engine)
 
 class HeaderIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
-        assert "data/app.db" not in str(engine.url), "test must not run against the real portal DB"
         self.db = SessionLocal()
 
     def tearDown(self) -> None:
