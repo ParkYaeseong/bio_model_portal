@@ -13,9 +13,13 @@ from ..user_display import display_name_for
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-# WorkflowRun's own vocabulary; queued/running are the only non-terminal ones.
-# Jobs use a different, wider set -- queue_estimate.ACTIVE_STATUSES.
-ACTIVE_RUN_STATUSES = {"queued", "running"}
+# The two halves of this page filter in opposite directions, on purpose.
+# A job's status is whatever an external worker reported, so it is matched
+# against queue_estimate's allowlist -- the same set the ETA math keys off, so
+# the two can never disagree. A run's status is a literal this codebase writes
+# itself, so the filter is a denylist of the finished ones: a status nobody
+# anticipated then shows up looking odd on the admin's page instead of
+# silently vanishing from it.
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
@@ -23,6 +27,42 @@ def _seconds_between(start: datetime | None, end: datetime | None) -> int | None
     if not start or not end:
         return None
     return max(0, int((end - start).total_seconds()))
+
+
+def _job_rows(db: Session, *, statuses: set[str] | None = None) -> list[tuple]:
+    """(Job, owner) rows, newest first. `statuses` is a lowercase allowlist.
+
+    outerjoin, not join: on a page whose whole purpose is to hide nothing, an
+    inner join would drop a job whose owner row had gone missing. Nothing
+    deletes users today, but PRAGMA foreign_keys is 0 on this database so
+    nothing enforces that either -- and display_name_for already renders a
+    null owner as "(unknown)". WorkflowRun has no `owner` relationship anyway,
+    and admin tests hold detached users, so both halves join explicitly rather
+    than traverse.
+    """
+    query = db.query(models.Job, models.User).outerjoin(
+        models.User, models.User.id == models.Job.user_id
+    )
+    if statuses is not None:
+        # Worker-reported text: compare case-insensitively.
+        query = query.filter(func.lower(models.Job.status).in_(statuses))
+    return query.order_by(models.Job.created_at.desc()).all()
+
+
+def _run_rows(db: Session, *, exclude_statuses: set[str] | None = None) -> list[tuple]:
+    """(WorkflowRun, owner, workflow) rows, newest first.
+
+    Outer-joined for the same reason as _job_rows; a run whose workflow row is
+    gone still names itself rather than disappearing.
+    """
+    query = (
+        db.query(models.WorkflowRun, models.User, models.Workflow)
+        .outerjoin(models.User, models.User.id == models.WorkflowRun.owner_id)
+        .outerjoin(models.Workflow, models.Workflow.id == models.WorkflowRun.workflow_id)
+    )
+    if exclude_statuses is not None:
+        query = query.filter(~models.WorkflowRun.status.in_(exclude_statuses))
+    return query.order_by(models.WorkflowRun.created_at.desc()).all()
 
 
 def require_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
@@ -51,18 +91,12 @@ def me(current_user: models.User = Depends(get_current_user)) -> dict:
 def activity(db: Session = Depends(get_db), _: models.User = Depends(require_admin)) -> dict:
     """Everything currently queued or running, across every account."""
     now = datetime.utcnow()
-    averages = queue_estimate.average_durations(db)
     items: list[dict] = []
 
-    # WorkflowRun has no `owner` relationship and the test users are detached,
-    # so both halves join models.User explicitly instead of traversing.
-    job_rows = (
-        db.query(models.Job, models.User)
-        .join(models.User, models.User.id == models.Job.user_id)
-        .filter(func.lower(models.Job.status).in_(queue_estimate.ACTIVE_STATUSES))
-        .order_by(models.Job.created_at.desc())
-        .all()
-    )
+    job_rows = _job_rows(db, statuses=queue_estimate.ACTIVE_STATUSES)
+    # average_durations scans 200 rows; skip it when there is nothing to
+    # estimate. An idle fleet is the common case and this page polls often.
+    averages = queue_estimate.average_durations(db) if job_rows else {}
     for job, owner in job_rows:
         estimate = queue_estimate.estimate_for_job(db, job, averages, now) or {}
         # Not estimate.get(key, fallback): a present-but-None value would slip
@@ -83,22 +117,16 @@ def activity(db: Session = Depends(get_db), _: models.User = Depends(require_adm
             "eta_seconds": estimate.get("eta_seconds"),
         })
 
-    run_rows = (
-        db.query(models.WorkflowRun, models.User, models.Workflow)
-        .join(models.User, models.User.id == models.WorkflowRun.owner_id)
-        .join(models.Workflow, models.Workflow.id == models.WorkflowRun.workflow_id)
-        .filter(models.WorkflowRun.status.in_(ACTIVE_RUN_STATUSES))
-        .order_by(models.WorkflowRun.created_at.desc())
-        .all()
-    )
-    for run, owner, workflow in run_rows:
+    for run, owner, workflow in _run_rows(db, exclude_statuses=TERMINAL_STATUSES):
+        # started_at is only set when a run actually starts, so every queued
+        # run falls back to when it was created.
         started = run.started_at or run.created_at
         items.append({
             "kind": "workflow",
             "id": run.id,
             "owner": display_name_for(owner),
-            "name": workflow.name,
-            "pipeline": workflow.template_key,
+            "name": workflow.name if workflow else "(deleted workflow)",
+            "pipeline": workflow.template_key if workflow else None,
             "status": run.status,
             "started_at": started.isoformat() if started else None,
             # A multi-step run has no single endpoint queue, so no position/ETA.
@@ -109,5 +137,7 @@ def activity(db: Session = Depends(get_db), _: models.User = Depends(require_adm
 
     # Every started_at here is datetime.isoformat() on a naive UTC value, so
     # lexicographic order is chronological order; unknown starts sort last.
+    # Both queries already return newest-first, which this stable sort keeps
+    # only as the tie-break between rows sharing a timestamp.
     items.sort(key=lambda item: item["started_at"] or "", reverse=True)
     return {"items": items}
