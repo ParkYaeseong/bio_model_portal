@@ -229,6 +229,34 @@ ALTER TABLE, since the project has no migration tool."
 
 ---
 
+### Task 1b: 테스트 import 순서 의존성 제거 (Task 1 에서 발견되어 추가됨)
+
+**Files:**
+- Modify: `portal/backend/conftest.py`
+- Modify: `portal/backend/tests/test_auth_identity.py`
+- Modify: `portal/backend/tests/test_admin_user_identity.py`
+
+`test_auth_identity.py` 는 `DATABASE_URL` 과 `KBF_FORWARD_AUTH_SECRET`,
+`KBF_ALLOW_INSECURE_SSO_HEADER` 를 모듈 최상단에서 설정하고, 자기가 `app.*` 를 가장 먼저
+import 한다고 가정한다. `app/database.py` 는 import 시점에 엔진을 만들고 `app/config.py` 는
+`get_settings()` 를 `@lru_cache` 로 고정하므로, 먼저 import 한 모듈이 영구히 이긴다.
+
+앞으로 추가할 `test_admin_*.py` 여섯 개는 모두 알파벳순으로 앞선다. 그중 하나라도 모듈
+수준에서 `app.*` 를 import 하면 엔진이 조용히 다른 DB 로 묶이고 `test_auth_identity.py` 의
+13개 테스트가 전부 깨진다. Task 1 은 import 를 함수 안으로 옮겨 이를 피했지만, 남은
+파일마다 같은 우회를 반복하는 것은 부채다.
+
+따라서 pytest 가 모든 테스트 모듈보다 먼저 읽는 `conftest.py` 로 환경 설정을 옮기고,
+`test_auth_identity.py` 의 단언은 실제 운영 DB(`/opt/bio_model_portal/data/app.db`)를
+가리키지 않는지 확인하는 형태로 바꾼다. Task 1 의 테스트 파일은 평범한 모듈 수준 import 로
+되돌린다. 이후 모든 작업은 일반적인 import 를 그대로 쓸 수 있다.
+
+검증은 순서를 바꿔 가며 수행한다. 두 파일을 각각, 두 순서로, 그리고 전체 스위트로 돌려
+269 passed 0 failed 를 확인하고, 알파벳순으로 앞서면서 모듈 수준 import 를 가진 임시 탐침
+파일을 넣었다 빼서 함정이 사라졌음을 확인한다.
+
+---
+
 ### Task 2: 표시명 폴백 헬퍼
 
 **Files:**
