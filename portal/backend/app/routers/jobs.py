@@ -32,11 +32,14 @@ FASTA_SUFFIXES = (".fasta", ".fa", ".fna", ".ffn", ".faa")
 
 @router.get("", response_model=List[JobRead])
 def list_jobs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    is_admin = getattr(current_user, "is_admin", False)
-    query = db.query(models.Job)
-    if not is_admin:
-        query = query.filter(models.Job.user_id == current_user.id)
-    jobs = query.order_by(models.Job.created_at.desc()).all()
+    # Personal list for everyone, admin included. Cross-user views live under
+    # /api/admin so the home screen means the same thing for every account.
+    jobs = (
+        db.query(models.Job)
+        .filter(models.Job.user_id == current_user.id)
+        .order_by(models.Job.created_at.desc())
+        .all()
+    )
     # Attach a rough queue-position + ETA to any still-active job. Queue position
     # counts other users' jobs ahead on the same endpoint (number only).
     avgs = queue_estimate.average_durations(db)
@@ -47,8 +50,6 @@ def list_jobs(db: Session = Depends(get_db), current_user: models.User = Depends
         est = queue_estimate.estimate_for_job(db, job, avgs, now)
         if est:
             read = read.model_copy(update=est)
-        if is_admin and job.user_id != current_user.id:
-            read = read.model_copy(update={"owner": job.user.username})
         out.append(read)
     return out
 

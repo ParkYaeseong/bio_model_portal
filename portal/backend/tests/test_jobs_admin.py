@@ -33,7 +33,9 @@ def test_non_admin_only_sees_their_own_jobs():
         assert len(out) == 1
 
 
-def test_admin_sees_everyone_elses_jobs():
+def test_admin_home_list_shows_only_their_own_jobs():
+    # Cross-user listing moved to /api/admin/*; the home list is personal for
+    # everyone, admin included.
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         admin = models.User(username="jobs_admin_admin1", password_hash="x"); db.add(admin)
@@ -44,11 +46,12 @@ def test_admin_sees_everyone_elses_jobs():
 
         admin.is_admin = True
         out = J.list_jobs(db=db, current_user=admin)
-        titles = {job.title for job in out}
-        assert titles == {"mine", "theirs"}
+        assert {job.title for job in out} == {"mine"}
 
 
-def test_admin_owner_field_is_set_only_for_others_jobs():
+def test_home_list_never_sets_the_owner_field():
+    # `owner` stays in the schema for the admin views, but the home list only
+    # ever contains the caller's own jobs, so it is always None here.
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         admin = models.User(username="jobs_admin_admin2", password_hash="x"); db.add(admin)
@@ -59,9 +62,7 @@ def test_admin_owner_field_is_set_only_for_others_jobs():
 
         admin.is_admin = True
         out = J.list_jobs(db=db, current_user=admin)
-        by_title = {job.title: job for job in out}
-        assert by_title["mine"].owner is None
-        assert by_title["theirs"].owner == other.username
+        assert [job.owner for job in out] == [None]
 
 
 def test_non_admin_cannot_read_someone_elses_job():
