@@ -88,6 +88,20 @@ class HeaderIdentityTests(unittest.TestCase):
             auth.settings.kbf_forward_auth_secret = orig_secret
             auth.settings.kbf_allow_insecure_sso_header = orig_flag
 
+    def test_non_ascii_gateway_secret_header_is_rejected_not_raised(self) -> None:
+        # Starlette latin-1-decodes headers, so a non-ASCII X-KBF-Auth value
+        # reaches hmac.compare_digest as a str outside the ASCII range. That
+        # must fail closed (401), not blow up with an unhandled TypeError.
+        original = auth.settings.kbf_forward_auth_secret
+        auth.settings.kbf_forward_auth_secret = "gateway-secret"
+        try:
+            with self.assertRaises(HTTPException):
+                auth.get_current_user(
+                    db=self.db, token=None, x_kbf_user="sub-forged", x_kbf_auth="\xc3bad"
+                )
+        finally:
+            auth.settings.kbf_forward_auth_secret = original
+
     def test_admin_header_marks_the_user_as_admin(self) -> None:
         user = auth.get_current_user(db=self.db, token=None, x_kbf_user="sub-admin", x_kbf_admin="true")
         self.assertTrue(user.is_admin)

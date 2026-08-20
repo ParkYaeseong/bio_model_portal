@@ -111,7 +111,10 @@ def get_current_user(
     if sub:
         expected_secret = settings.kbf_forward_auth_secret
         if expected_secret:
-            if not x_kbf_auth or not hmac.compare_digest(x_kbf_auth, expected_secret):
+            if not x_kbf_auth or not hmac.compare_digest(
+                x_kbf_auth.encode("utf-8", "surrogateescape"),
+                expected_secret.encode("utf-8"),
+            ):
                 raise credentials_exception
         elif not settings.kbf_allow_insecure_sso_header:
             # Fail closed: no shared secret configured and the dev opt-in is off,

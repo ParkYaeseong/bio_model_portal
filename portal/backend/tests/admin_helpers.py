@@ -1,4 +1,4 @@
-"""Shared fixtures for the admin API tests."""
+"""Shared helpers for the admin API tests."""
 
 import uuid
 from datetime import datetime
@@ -16,6 +16,11 @@ def make_user(is_admin=False, **kwargs):
 
     `is_admin` is not a column: auth.get_current_user attaches it per request
     from the X-KBF-Admin header, so tests set it the same way.
+
+    Note: the returned object is detached from its session (expunged), so
+    plain attribute access works but relationship access (e.g. `user.jobs`)
+    raises DetachedInstanceError. Handlers exercised against this object must
+    query for related rows rather than traverse relationships off it.
     """
     with SessionLocal() as db:
         user = models.User(username=f"adm_{uuid.uuid4().hex[:8]}", password_hash="x", **kwargs)

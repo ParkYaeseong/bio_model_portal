@@ -49,3 +49,15 @@ def _isolate_db():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_dependency_overrides():
+    """A leaked override silently authenticates every later test, and the suite
+    cannot see it happen. Clear after every test rather than trusting each one
+    to do it."""
+    yield
+
+    from app.main import app
+
+    app.dependency_overrides.clear()
