@@ -19,3 +19,26 @@ def get_db():
     finally:
         db.close()
 
+
+def ensure_added_columns() -> None:
+    """Add columns introduced after a database was first created.
+
+    There is no migration tool in this project: main.py calls
+    Base.metadata.create_all, which creates missing TABLES but never missing
+    COLUMNS. Running this twice is a no-op.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing = {column["name"] for column in inspector.get_columns("users")}
+    additions = (
+        ("email", "ALTER TABLE users ADD COLUMN email VARCHAR(255)"),
+        ("display_name", "ALTER TABLE users ADD COLUMN display_name VARCHAR(255)"),
+    )
+    with engine.begin() as conn:
+        for column, ddl in additions:
+            if column not in existing:
+                conn.execute(text(ddl))
+

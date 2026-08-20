@@ -26,6 +26,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Captured from the SSO claims at login. Nullable because local accounts
+    # (and rows created before this column existed) have neither.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    display_name: Mapped[Optional[str]] = mapped_column(String(255))
 
     jobs: Mapped[list[Job]] = relationship("Job", back_populates="user", cascade="all, delete-orphan")
 

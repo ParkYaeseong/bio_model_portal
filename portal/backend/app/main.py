@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .database import Base, engine
+from .database import Base, engine, ensure_added_columns
 from .mcp.server import router as mcp_router
 from .routers import assistant, auth, chains, chat, jobs, mcp_tokens, pipelines, rfdiffusion, selfimprove, users, workflows
 from .selfimprove.scheduler import selfimprove_scheduler
@@ -15,6 +15,7 @@ from .workflow.monitor import workflow_monitor
 
 settings = get_settings()
 Base.metadata.create_all(bind=engine)
+ensure_added_columns()
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(

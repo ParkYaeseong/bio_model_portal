@@ -2,6 +2,7 @@
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -66,6 +67,19 @@ def provision_sso_user(
     if user is None:
         user = models.User(username=username, password_hash=hash_password(secrets.token_urlsafe(32)))
         db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    # The gateway percent-encodes identity headers so non-ASCII names stay
+    # valid HTTP; decode before storing or a Korean name lands as '%ED%99%8D...'.
+    # An absent header must never wipe what we already know.
+    changed = False
+    for attribute, raw in (("email", email), ("display_name", name)):
+        value = unquote(str(raw)).strip() if raw else ""
+        if value and getattr(user, attribute) != value:
+            setattr(user, attribute, value)
+            changed = True
+    if changed:
         db.commit()
         db.refresh(user)
     return user
