@@ -56,6 +56,13 @@ SSO(`/opt/bio_model_portal_sso`)가 붙이는 `X-KBF-Admin: true` 헤더 →
 | `GET /history` | 전체 이력. `user`, `pipeline`, `status`, `since`, `limit` 로 거르고 최신순 정렬 |
 | `GET /usage` | 사용자별 집계. 작업 수, 성공·실패·취소 건수, 누적 실행 시간, 마지막 활동 시각 |
 
+"실행·대기 중"의 판정은 새로 정의하지 않고 `queue_estimate` 가 이미 쓰는 활성 상태
+집합을 그대로 따른다. WorkflowRun 은 `status` 가 `queued` 또는 실행 중일 때 활성으로
+본다. 누적 실행 시간은 Job 의 경우 `created_at`부터 종료 시각(`updated_at`)까지,
+WorkflowRun 은 `started_at`부터 `finished_at`까지로 계산하며, 종료 시각이 없으면
+집계에서 제외한다. `GET /history` 의 `limit` 은 기본 100, 최대 500 이고 `offset` 으로
+페이지를 넘긴다.
+
 큐 위치와 ETA 는 기존 `queue_estimate` 를 재사용한다. 상세 조회와 아티팩트
 다운로드와 취소는 새로 만들지 않는다. `jobs` 라우터의 `_get_job_or_404` 가 이미 admin
 에게 소유자 검사를 면제한다. 워크플로 실행 상세에는 admin 예외가 없으므로
