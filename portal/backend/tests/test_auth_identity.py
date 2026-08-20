@@ -1,24 +1,10 @@
-import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
-
-# Point the app at a throwaway SQLite file BEFORE importing anything that
-# resolves settings/engine, so tests never touch the real portal DB.
-_TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_TMP_DB.close()
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB.name}"
-# Isolate from the deployed .env so the gateway-secret check is controlled
-# explicitly per test rather than inherited from the running deployment.
-os.environ["KBF_FORWARD_AUTH_SECRET"] = ""
-# These tests exercise the no-secret code path; opt into the explicit dev flag
-# so the header is honored. Production leaves this False -> fails closed.
-os.environ["KBF_ALLOW_INSECURE_SSO_HEADER"] = "true"
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -30,7 +16,7 @@ Base.metadata.create_all(bind=engine)
 
 class HeaderIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
-        assert _TMP_DB.name in str(engine.url), "test must run against the throwaway DB"
+        assert "data/app.db" not in str(engine.url), "test must not run against the real portal DB"
         self.db = SessionLocal()
 
     def tearDown(self) -> None:

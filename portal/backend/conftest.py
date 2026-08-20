@@ -11,6 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 _TMP = tempfile.mkdtemp(prefix="wf_test_")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP}/test.db")
 os.environ.setdefault("STORAGE_ROOT", _TMP)
+# These two must also be set before any test module imports app.* (app/config.py
+# caches get_settings() with @lru_cache, so whoever imports first wins). Setting
+# them here rather than in a test module makes the header-identity code path
+# testable regardless of which test file pytest collects first. Production
+# leaves KBF_ALLOW_INSECURE_SSO_HEADER false and fails closed.
+os.environ.setdefault("KBF_FORWARD_AUTH_SECRET", "")
+os.environ.setdefault("KBF_ALLOW_INSECURE_SSO_HEADER", "true")
 
 import pytest
 
