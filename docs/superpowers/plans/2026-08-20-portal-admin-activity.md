@@ -1264,12 +1264,19 @@ export type AdminHistoryItem = {
 };
 
 export type AdminUsageRow = {
+  // owner_id, not owner, identifies an account: two deleted accounts both
+  // render as "(unknown)" and two live accounts can share a display name.
+  // Use it as the React key.
+  owner_id: number;
   owner: string;
   total: number;
   completed: number;
   failed: number;
   cancelled: number;
   active: number;
+  // Under-reports on purpose: a queued run and an in-flight job contribute
+  // nothing, because neither has a measurable run time yet. Do not label this
+  // as total time on the fleet.
   total_seconds: number;
   last_activity: string | null;
 };
