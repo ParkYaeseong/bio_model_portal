@@ -126,11 +126,25 @@ def _step_dict(s: models.WorkflowRunStep) -> dict:
             "error_message": s.error_message, "logs": s.logs}
 
 
-@router.get("/runs/{run_id}")
-def get_run(run_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    run = db.query(models.WorkflowRun).filter_by(id=run_id, owner_id=user.id).first()
+def _run_or_404(db: Session, user: models.User, run_id: str) -> models.WorkflowRun:
+    """Owner-scoped lookup, with the same admin bypass the jobs router uses.
+
+    An admin opens another account's run from the admin activity and history
+    views, which list every account's work; without this they would get a 404
+    on a row the same admin page had just shown them.
+    """
+    query = db.query(models.WorkflowRun).filter(models.WorkflowRun.id == run_id)
+    if not getattr(user, "is_admin", False):
+        query = query.filter(models.WorkflowRun.owner_id == user.id)
+    run = query.first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found.")
+    return run
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    run = _run_or_404(db, user, run_id)
     return {"id": run.id, "status": run.status, "error_message": run.error_message,
             "input_summary": run.input_summary, "output_summary": run.output_summary,
             "steps": [_step_dict(s) for s in run.steps]}
@@ -138,18 +152,14 @@ def get_run(run_id: str, db: Session = Depends(get_db), user: models.User = Depe
 
 @router.get("/runs/{run_id}/report")
 def get_report(run_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    run = db.query(models.WorkflowRun).filter_by(id=run_id, owner_id=user.id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found.")
+    run = _run_or_404(db, user, run_id)
     ctx = run.output_summary or {}
     return {"run_id": run.id, "status": run.status, "candidates": ctx.get("candidates", [])}
 
 
 @router.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    run = db.query(models.WorkflowRun).filter_by(id=run_id, owner_id=user.id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found.")
+    run = _run_or_404(db, user, run_id)
     if run.status in {"running", "queued"}:
         run.status = "cancelled"
         run.finished_at = datetime.utcnow()
