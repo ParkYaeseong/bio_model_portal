@@ -38,6 +38,8 @@ def test_running_it_again_changes_nothing_and_keeps_the_rows(tmp_path, monkeypat
         assert conn.execute(text("SELECT count(*) FROM users")).scalar() == 1
         assert conn.execute(text("SELECT username FROM users")).scalar() == "sso:legacy"
 
+    assert {"email", "display_name"} <= {c["name"] for c in inspect(legacy).get_columns("users")}
+
 
 def test_does_nothing_when_the_table_does_not_exist_yet(tmp_path, monkeypatch):
     empty = create_engine(f"sqlite:///{tmp_path}/empty.db")

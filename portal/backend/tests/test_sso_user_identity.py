@@ -43,12 +43,24 @@ def test_a_blank_header_does_not_wipe_a_stored_value():
         assert user.display_name == "Keep Me"
 
 
-def test_an_unchanged_login_does_not_write():
+def test_an_unchanged_login_does_not_commit_again():
     with SessionLocal() as db:
-        first = auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
-        stamp = first.updated_at
-        again = auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
-        assert again.updated_at == stamp
+        auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
+
+        commits = 0
+        original_commit = db.commit
+
+        def counting_commit():
+            nonlocal commits
+            commits += 1
+            original_commit()
+
+        db.commit = counting_commit
+        user = auth.provision_sso_user(db, "sub-identity-6", "same@b.c", "Same Name")
+
+        assert commits == 0, "an unchanged login must not write"
+        assert user.email == "same@b.c"
+        assert user.display_name == "Same Name"
 
 
 def test_a_non_string_header_sentinel_is_ignored():
