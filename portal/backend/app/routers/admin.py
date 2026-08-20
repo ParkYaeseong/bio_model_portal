@@ -387,3 +387,89 @@ def history(
 
     items = [_public_row(row) for row in page]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/usage")
+def usage(
+    since: str | None = None,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+) -> dict:
+    """How much of the fleet each account has consumed, busiest first.
+
+    The same rows /history lists, aggregated per account instead of paginated:
+    one entry per owner, with the four outcome buckets, the summed run time and
+    the last time they asked for anything. Sourced from `_history_rows` and
+    filtered through `_parse_since`/`_history_matches` so `since` cannot come
+    to mean one thing here and another there -- including that a blank value
+    filters nothing and an unparseable one is a 400, not a 500.
+
+    Grouped on `owner_id`, never on the display label: two deleted accounts
+    both render as "(unknown)" and two live accounts may well share a name, and
+    silently adding two people's totals together is exactly the error this page
+    exists to make impossible. The label is carried along for display only.
+
+    `total_seconds` sums the durations `_history_rows` was able to measure and
+    skips the ones it could not, so it under-reports rather than guesses: a
+    queued run and a job still in flight contribute nothing, and an account
+    whose work has all been of that kind reports 0 rather than null.
+    """
+    since_dt = _parse_since(since)
+
+    entries: dict[int, dict] = {}
+    # The newest `_created` per group, kept out of `entries` because it is a
+    # datetime and everything in `entries` is already the response.
+    newest: dict[int, datetime] = {}
+
+    for row in _history_rows(db):
+        if not _history_matches(row, user=None, pipeline=None, status=None, since=since_dt):
+            continue
+
+        owner_id = row["owner_id"]
+        entry = entries.get(owner_id)
+        if entry is None:
+            entry = entries[owner_id] = {
+                "owner_id": owner_id,
+                # Any row in the group will do: they all name one account.
+                "owner": row["owner"],
+                "total": 0,
+                "completed": 0,
+                "failed": 0,
+                "cancelled": 0,
+                "active": 0,
+                "total_seconds": 0,
+                "last_activity": None,
+            }
+
+        entry["total"] += 1
+        # Case-insensitive for the same reason /history's status filter is:
+        # a job's status is whatever text a worker sent. Anything that is not
+        # one of the three finished states counts as still going, so a status
+        # nobody anticipated inflates "active" rather than vanishing from the
+        # totals -- the same bias as /activity's denylist.
+        status = (row["status"] or "").lower()
+        entry[status if status in TERMINAL_STATUSES else "active"] += 1
+
+        seconds = row["duration_seconds"]
+        # `is not None`, not truthiness: a genuine 0-second job is a
+        # measurement, and only an unmeasurable one may be skipped.
+        if seconds is not None:
+            entry["total_seconds"] += seconds
+
+        created = row["_created"]
+        if created is not None and (owner_id not in newest or created > newest[owner_id]):
+            newest[owner_id] = created
+
+    for owner_id, moment in newest.items():
+        entries[owner_id]["last_activity"] = moment.isoformat()
+
+    # Busiest account first, which is the question the page is asked. The
+    # tie-break is the label and then the id, so two accounts with equal
+    # totals hold their order between requests instead of following whichever
+    # of them happened to run something most recently; the id is stringified
+    # only so a null owner could not raise mid-sort.
+    users = sorted(
+        entries.values(),
+        key=lambda entry: (-entry["total"], entry["owner"].lower(), str(entry["owner_id"])),
+    )
+    return {"users": users}
