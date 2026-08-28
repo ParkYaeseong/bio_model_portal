@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 
 import { McpToken, createMcpToken, listMcpTokens, revokeMcpToken } from "@/lib/api";
@@ -89,7 +90,15 @@ export default function McpSettingsPage() {
   return (
     <main className="min-h-screen bg-slate-50">
       <section className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="text-2xl font-semibold text-slate-900">AI 연결 (MCP)</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-slate-900">AI 연결 (MCP)</h1>
+          <Link
+            href="/"
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
+          >
+            ← 홈
+          </Link>
+        </div>
         <p className="mt-2 text-sm text-slate-500">
           외부 AI(Claude/Codex/Gemini)를 MCP로 연결해 포탈 모델을 실행·설명하게 합니다.
         </p>

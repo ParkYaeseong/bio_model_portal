@@ -413,3 +413,65 @@ export type CompatGraph = { nodes: CompatNode[]; edges: CompatEdge[]; examples: 
 export async function getChainsCompat(token?: string): Promise<CompatGraph> {
   return apiFetch<CompatGraph>("/api/chains/compat", token);
 }
+
+// Admin-only cross-user views. `/api/admin/me` is open to everyone so the
+// header can decide whether to render the menu; the rest answer 403.
+export type AdminActivityItem = {
+  kind: "job" | "workflow";
+  id: string;
+  owner: string;
+  name: string;
+  pipeline: string | null;
+  status: string;
+  started_at: string | null;
+  elapsed_seconds: number | null;
+  queue_position: number | null;
+  eta_seconds: number | null;
+};
+
+export type AdminHistoryItem = {
+  kind: "job" | "workflow";
+  id: string;
+  owner: string;
+  name: string;
+  pipeline: string | null;
+  status: string;
+  created_at: string | null;
+  duration_seconds: number | null;
+  error_message: string | null;
+};
+
+export type AdminUsageRow = {
+  // owner_id, not owner, identifies an account: two deleted accounts both
+  // render as "(unknown)" and two live accounts can share a display name.
+  // Use it as the React key.
+  owner_id: number;
+  owner: string;
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  active: number;
+  // Under-reports on purpose: a queued run and an in-flight job contribute
+  // nothing, because neither has a measurable run time yet. Do not label this
+  // as total time on the fleet.
+  total_seconds: number;
+  last_activity: string | null;
+};
+
+export const fetchAdminFlag = (token: string) =>
+  apiFetch<{ is_admin: boolean }>("/api/admin/me", token);
+
+export const fetchAdminActivity = (token: string) =>
+  apiFetch<{ items: AdminActivityItem[] }>("/api/admin/activity", token);
+
+export const fetchAdminHistory = (token: string, params: { user?: string; status?: string } = {}) => {
+  const query = new URLSearchParams();
+  if (params.user) query.set("user", params.user);
+  if (params.status) query.set("status", params.status);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiFetch<{ items: AdminHistoryItem[]; total: number }>(`/api/admin/history${suffix}`, token);
+};
+
+export const fetchAdminUsage = (token: string) =>
+  apiFetch<{ users: AdminUsageRow[] }>("/api/admin/usage", token);

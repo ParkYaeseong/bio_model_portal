@@ -21,6 +21,7 @@ import {
   downloadArchive,
   downloadArtifact,
   fetchSelfimproveAdmin,
+  fetchAdminFlag,
 } from "@/lib/api";
 import { triggerDownload } from "@/lib/download";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
@@ -221,6 +222,9 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
 
   const { data: pipelineData } = useSWR(["pipelines"], () => fetchPipelines(token), { onError: handleAuthError });
   const { data: siAdmin } = useSWR(["si-admin"], () => fetchSelfimproveAdmin(token));
+  // Open to every account (it only answers a boolean), so no onError handling:
+  // a non-admin gets `false` and simply never sees the menu.
+  const { data: portalAdmin } = useSWR(["portal-admin-flag"], () => fetchAdminFlag(token));
   const { data: jobs, mutate: refreshJobs, isLoading: jobsLoading } = useSWR(
     ["jobs"],
     () => fetchJobs(token),
@@ -614,6 +618,14 @@ function Dashboard({ onLogout, onAuthExpired }: DashboardProps) {
                 className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
               >
                 자가개선
+              </Link>
+            )}
+            {portalAdmin?.is_admin && (
+              <Link
+                href="/admin"
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100"
+              >
+                운영 현황
               </Link>
             )}
             <button className="rounded-full border border-slate-200 px-5 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={onLogout}>
